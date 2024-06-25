@@ -1,0 +1,39 @@
+################################################################################
+# Copyright (c) 2024 Contributors to the Eclipse Foundation
+#
+# See the NOTICE file(s) distributed with this work for additional
+# information regarding copyright ownership.
+#
+# This program and the accompanying materials are made available under the
+# terms of the Apache License Version 2.0 which is available at
+# https://www.apache.org/licenses/LICENSE-2.0
+#
+# SPDX-License-Identifier: Apache-2.0
+################################################################################
+
+[workspace]
+resolver = "2"
+members = [
+    "up-subscription",
+    #    "up-subscription-cli",
+]
+
+[workspace.package]
+name = "up-subscription-rust"
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+async-mutex = { version = "1.4" }
+async-trait = { version = "0.1" }
+env_logger = { version = "0.11" }
+futures = { version = "0.3" }
+log = { version = "0.4" }
+protobuf = { version = "3.4" }
+test-case = { version = "3.3" }
+tokio = { version = "1", features = ["full"] }
+
+# up-rust = { git = "https://github.com/eclipse-uprotocol/up-rust", rev = "d736fdf35ff4728effa7f36b720f0fc1605d5ba0", features = [
+#     "usubscription",
+# ] }
+up-rust = { path = "../up-rust", features = ["usubscription"] }
