@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tokio::task;
 
 use up_rust::core::usubscription::{NotificationsRequest, USubscription};
-use up_rust::{UListener, UMessage, UMessageBuilder, UStatus, UUID};
+use up_rust::{UCode, UListener, UMessage, UMessageBuilder, UStatus, UUID};
 
 use crate::USubscriptionService;
 
@@ -50,10 +50,12 @@ impl UListener for RegisterForNotificationsListener {
             {
                 Ok(()) => UMessageBuilder::response_for_request(&message_attributes_cloned)
                     .with_message_id(UUID::build())
+                    .with_comm_status(UCode::OK)
                     .build_with_protobuf_payload(&UStatus::ok())
                     .expect("Error building response message"),
                 Err(status) => UMessageBuilder::response_for_request(&message_attributes_cloned)
                     .with_message_id(UUID::build())
+                    .with_comm_status(status.code.enum_value_or(UCode::UNKNOWN))
                     .build_with_protobuf_payload(&status)
                     .expect("Error building response message"),
             };

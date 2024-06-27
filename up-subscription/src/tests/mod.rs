@@ -11,10 +11,12 @@
  * SPDX-License-Identifier: Apache-2.0
  ********************************************************************************/
 
-mod test_lib;
-mod test_objects;
-pub use test_objects::*;
+pub(crate) mod test_lib;
+pub(crate) use test_lib::*;
 
-mod test_transports;
+pub(crate) mod test_objects;
+pub(crate) use test_objects::*;
+
+pub(crate) mod test_transports;
 
 mod usubscription_tests;

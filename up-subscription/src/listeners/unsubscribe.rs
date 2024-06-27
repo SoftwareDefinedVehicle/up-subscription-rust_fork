@@ -74,10 +74,47 @@ impl UListener for UnsubscribeListener {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
     use test_case::test_case;
+
+    use up_rust::core::usubscription::{SubscriptionResponse, UnsubscribeResponse};
     use up_rust::UUri;
 
-    #[test_case(UUri::default(); "Special listen UUri")]
+    use super::*;
+    use crate::helpers;
+    use crate::tests::{test_lib, test_objects};
+    use crate::usubscription;
+
+    #[test_case(UUri::default(); "Standard local subscription")]
     #[tokio::test]
-    async fn test_subscribe_listener(_uuri: UUri) {}
+    async fn test_unsubscribe_listener(_uuri: UUri) {
+        // setup
+        test_lib::before_test();
+        let (usubscription, mut send_receiver) =
+            test_objects::get_mock_for_listeners::<UnsubscribeResponse>();
+        let listener = UnsubscribeListener::new(usubscription.clone());
+
+        // create request object(s)
+        let unsubscribe_request = test_objects::unsubscribe_request(
+            test_objects::local_topic1_uri(),
+            test_objects::subscriber_info1(),
+        );
+        let msg = UMessageBuilder::request(
+            usubscription.subscribe_uuri(),
+            UUri::from_str(test_objects::UENTITY_OWN_URI).unwrap(),
+            usubscription::UP_REMOTE_TTL,
+        )
+        .build_with_protobuf_payload(&unsubscribe_request)
+        .unwrap();
+
+        // send request
+        listener.on_receive(msg).await;
+
+        // receive and assert response
+        let received = send_receiver.recv().await;
+        assert!(
+            received.is_some(),
+            "Expected to receive some subscribe response"
+        );
+    }
 }

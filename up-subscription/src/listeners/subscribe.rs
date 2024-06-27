@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tokio::task;
 
 use up_rust::core::usubscription::{SubscriptionRequest, USubscription};
-use up_rust::{UListener, UMessage, UMessageBuilder, UStatus, UUID};
+use up_rust::{UCode, UListener, UMessage, UMessageBuilder, UStatus, UUID};
 
 use crate::USubscriptionService;
 
@@ -53,17 +53,19 @@ impl UListener for SubscribeListener {
                 Ok(response) => {
                     // Success as well as failure status passed through into response message...
                     UMessageBuilder::response_for_request(&message_attributes_cloned)
+                        .with_comm_status(UCode::OK)
                         .with_message_id(UUID::build())
                         .build_with_protobuf_payload(&response)
                         .expect("Error building response message")
                 }
                 Err(status) => UMessageBuilder::response_for_request(&message_attributes_cloned)
                     .with_message_id(UUID::build())
+                    .with_comm_status(status.code.enum_value_or(UCode::UNKNOWN))
                     .build_with_protobuf_payload(&status)
                     .expect("Error building response message"),
             };
 
-            // 2. Respond error status to caller
+            // 2. Return status to caller
             up_transport_cloned
                 .send(message)
                 .await
@@ -78,10 +80,69 @@ impl UListener for SubscribeListener {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
     use test_case::test_case;
-    use up_rust::UUri;
 
-    #[test_case(UUri::default(); "Special listen UUri")]
+    use up_rust::{
+        core::usubscription::{State, SubscriptionResponse},
+        UUri,
+    };
+
+    use super::*;
+    use crate::tests::{test_lib, test_objects};
+    use crate::usubscription;
+
+    // Test simple turnaround from request going into listener and getting a matching response out.
+    // Note: This might generate an error message in passing, due the the mock not implementing some business logic.
+    #[test_case(test_objects::local_topic1_uri(), UCode::OK; "Standard local subscription")]
+    #[test_case(test_objects::remote_topic1_uri(), UCode::OK; "Standard remote subscription")]
+    #[test_case(UUri::default(), UCode::INVALID_ARGUMENT; "Empty topic UUri")]
     #[tokio::test]
-    async fn test_subscribe_listener(_uuri: UUri) {}
+    async fn test_subscribe_listener(topic: UUri, expected_code: UCode) {
+        // setup
+        test_lib::before_test();
+        let (usubscription, mut send_receiver) =
+            test_objects::get_mock_for_listeners::<SubscriptionResponse>();
+        let listener = SubscribeListener::new(usubscription.clone());
+
+        // create request object(s)
+        let subscribe_request =
+            test_objects::subscription_request(topic, test_objects::subscriber_info1());
+        let msg = UMessageBuilder::request(
+            usubscription.subscribe_uuri(),
+            UUri::from_str(test_objects::UENTITY_OWN_URI).unwrap(),
+            usubscription::UP_REMOTE_TTL,
+        )
+        .build_with_protobuf_payload(&subscribe_request)
+        .unwrap();
+
+        // send request
+        listener.on_receive(msg).await;
+
+        // receive and assert response
+        let received = send_receiver
+            .recv()
+            .await
+            .expect("Expected to receive some subscribe response");
+
+        if expected_code == UCode::OK {
+            assert!(received.is_ok(), "Expected positive/Ok response");
+            let topic = received.unwrap().topic.unwrap();
+            assert_eq!(subscribe_request.topic.unwrap(), topic.clone());
+            assert!(
+                usubscription
+                    .represents_current_state(
+                        &test_objects::subscriber_info1(),
+                        &topic,
+                        vec![State::SUBSCRIBE_PENDING, State::SUBSCRIBED],
+                    )
+                    .is_some(),
+                "Expected either state SUBSCRIBED or SUBSCRIBE_PENDING"
+            );
+        } else {
+            assert!(received.is_err(), "Expected negative/Err response");
+            let status = received.err().unwrap();
+            assert_eq!(status.code, expected_code.into());
+        }
+    }
 }

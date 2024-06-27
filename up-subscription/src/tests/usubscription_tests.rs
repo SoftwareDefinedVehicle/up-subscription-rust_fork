@@ -14,13 +14,9 @@
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
-    use std::sync::Arc;
     use std::time::Duration;
     use test_case::test_case;
-    use tokio::{
-        sync::mpsc::{self, Receiver},
-        time::timeout,
-    };
+    use tokio::time::timeout;
 
     use up_rust::core::usubscription::{
         NotificationsRequest, State, SubscriberInfo, SubscriptionRequest, SubscriptionStatus,
@@ -29,46 +25,10 @@ mod tests {
     use up_rust::UUri;
 
     use crate::common::helpers;
-    use crate::tests::test_transports::{NotificationTuple, TransportMock};
     use crate::tests::{test_lib, test_objects};
-    use crate::USubscriptionService;
 
     // This is a second-scale value used by some tests to wait-timeout on receiving data from UTransport-mocks
     const RECEIVE_TIMEOUT_SECONDS: u64 = 1;
-
-    fn get_usubscription_mock(
-        remote_state_channel: bool,
-    ) -> (
-        Arc<USubscriptionService>,
-        Receiver<NotificationTuple>,
-        Option<Receiver<NotificationTuple>>,
-    ) {
-        let (notification_sender, notification_receiver) = mpsc::channel::<NotificationTuple>(1);
-
-        let (remote_state_sender, remote_state_receiver) = if remote_state_channel {
-            let (sender, receiver) = mpsc::channel::<NotificationTuple>(1);
-            (Some(sender), Some(receiver))
-        } else {
-            (None, None)
-        };
-
-        let up_client_mock = Arc::new(TransportMock::new(
-            test_objects::remote_usubscription_service_uri(),
-            notification_sender,
-            remote_state_sender,
-        ));
-
-        (
-            Arc::new(USubscriptionService::new(
-                Some("LocalMockUsub"),
-                test_objects::local_usubscription_service_uri(),
-                up_client_mock.clone(),
-                up_client_mock.clone(),
-            )),
-            notification_receiver,
-            remote_state_receiver,
-        )
-    }
 
     // Test basic state setting roundtrip
     // - internal subscriber/topic/status combination-setting working as expected
@@ -78,7 +38,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_status(status: SubscriptionStatus) {
         test_lib::before_test();
-        let (usubscription, _, _) = get_usubscription_mock(false);
+        let (usubscription, _, _) = test_objects::get_usubscription_mock(false);
 
         usubscription.update_status(
             &test_objects::subscriber_info1(),
@@ -118,7 +78,7 @@ mod tests {
         subscriber_tuples: Vec<(SubscriberInfo, UUri, SubscriptionStatus)>,
     ) {
         test_lib::before_test();
-        let (usubscription, _, _) = get_usubscription_mock(false);
+        let (usubscription, _, _) = test_objects::get_usubscription_mock(false);
 
         // tracking the "final" state sets for verification down below (as we might be overwriting existing subscriber-topic combinations)
         #[allow(clippy::mutable_key_type)]
@@ -154,7 +114,8 @@ mod tests {
         mut subscriber_tuples: Vec<(SubscriberInfo, UUri, SubscriptionStatus)>,
     ) {
         test_lib::before_test();
-        let (usubscription, mut notification_receiver, _) = get_usubscription_mock(false);
+        let (usubscription, mut notification_receiver, _) =
+            test_objects::get_usubscription_mock(false);
 
         let notifications_register_request = NotificationsRequest {
             topic: Some(test_objects::notification_topic_uri()).into(),
@@ -235,7 +196,8 @@ mod tests {
     #[tokio::test]
     async fn test_complex_notification_setup(subscriber_tuples: Vec<(SubscriberInfo, UUri)>) {
         test_lib::before_test();
-        let (usubscription, mut notification_receiver, _) = get_usubscription_mock(false);
+        let (usubscription, mut notification_receiver, _) =
+            test_objects::get_usubscription_mock(false);
 
         // helper to state-cycle through below, to avoid setting identical status to the same combo
         let status_helpers: Vec<SubscriptionStatus> = vec![
@@ -304,7 +266,7 @@ mod tests {
     #[tokio::test]
     async fn test_subscribe_fail(subscription_request: SubscriptionRequest) {
         test_lib::before_test();
-        let (usubscription, _, _) = get_usubscription_mock(false);
+        let (usubscription, _, _) = test_objects::get_usubscription_mock(false);
 
         assert_eq!(
             usubscription.count_in_state(
@@ -347,7 +309,7 @@ mod tests {
     #[tokio::test]
     async fn test_unsubscribe_success(unsubscribe_request: UnsubscribeRequest) {
         test_lib::before_test();
-        let (usubscription, _, _) = get_usubscription_mock(false);
+        let (usubscription, _, _) = test_objects::get_usubscription_mock(false);
 
         let result = usubscription.unsubscribe(unsubscribe_request.clone()).await;
         assert!(result.is_ok());
@@ -367,7 +329,7 @@ mod tests {
     #[tokio::test]
     async fn test_unsubscribe_fail(unsubscribe_request: UnsubscribeRequest) {
         test_lib::before_test();
-        let (usubscription, _, _) = get_usubscription_mock(false);
+        let (usubscription, _, _) = test_objects::get_usubscription_mock(false);
 
         assert_eq!(
             usubscription.count_in_state(
@@ -398,7 +360,7 @@ mod tests {
         subscriber_tuples: Vec<(SubscriberInfo, UUri)>,
     ) {
         test_lib::before_test();
-        let (usubscription, _, _) = get_usubscription_mock(false);
+        let (usubscription, _, _) = test_objects::get_usubscription_mock(false);
 
         // List of notification topics
         #[allow(clippy::mutable_key_type)]
@@ -492,7 +454,7 @@ mod tests {
     #[tokio::test]
     async fn test_remote_subscribe_unsubscribe() {
         test_lib::before_test();
-        let (local_usubscription, _, _) = get_usubscription_mock(false);
+        let (local_usubscription, _, _) = test_objects::get_usubscription_mock(false);
 
         // First, subscribe...
         let subscription_request = test_objects::subscription_request(
@@ -556,7 +518,7 @@ mod tests {
         subscriber_tuples: Vec<(SubscriberInfo, UUri)>,
     ) {
         test_lib::before_test();
-        let (usubscription, _, _) = get_usubscription_mock(false);
+        let (usubscription, _, _) = test_objects::get_usubscription_mock(false);
 
         // List of notification topics
         #[allow(clippy::mutable_key_type)]
@@ -673,7 +635,8 @@ mod tests {
     #[tokio::test]
     async fn test_remote_subscribe_status_flow(subscriber_tuples: Vec<(SubscriberInfo, UUri)>) {
         test_lib::before_test();
-        let (usubscription, mut notification_receiver, _) = get_usubscription_mock(false);
+        let (usubscription, mut notification_receiver, _) =
+            test_objects::get_usubscription_mock(false);
 
         // #### SECTION 1 - perform setup and prep
 

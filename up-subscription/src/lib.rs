@@ -25,4 +25,4 @@ pub(crate) mod listeners;
 pub use listeners::*;
 
 mod tests;
-pub use tests::*;
+pub(crate) use tests::*;

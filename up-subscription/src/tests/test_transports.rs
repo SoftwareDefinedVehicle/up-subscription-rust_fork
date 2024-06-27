@@ -12,21 +12,21 @@
  ********************************************************************************/
 
 use async_trait::async_trait;
+use protobuf::Message;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 
 use up_rust::core::usubscription::{
-    State, SubscriberInfo, SubscriptionRequest, SubscriptionResponse, SubscriptionStatus,
-    UnsubscribeRequest, UnsubscribeResponse, Update,
+    State, SubscriptionRequest, SubscriptionResponse, SubscriptionStatus, UnsubscribeRequest,
+    UnsubscribeResponse, Update,
 };
 use up_rust::{
     communication::CallOptions, communication::RpcClient, communication::ServiceInvocationError,
-    communication::UPayload, UListener, UMessage, UStatus, UTransport, UUri,
+    communication::UPayload, UCode, UListener, UMessage, UStatus, UTransport, UUri,
 };
 
 use crate::common::helpers;
-
-pub(crate) type NotificationTuple = (SubscriberInfo, UUri, SubscriptionStatus);
+use crate::tests::NotificationTuple;
 
 // TEST TRANSPORT FOR LOCAL NOTIFICATION FUNCTIONALITY
 // This serves as both
@@ -38,20 +38,20 @@ pub(crate) type NotificationTuple = (SubscriberInfo, UUri, SubscriptionStatus);
 //
 pub(crate) struct TransportMock {
     own_uri: UUri,
-    notification_properties_sender: Sender<NotificationTuple>,
-    remote_state_sender: Option<Sender<NotificationTuple>>,
+    send_sender: Sender<NotificationTuple>,
+    invoke_method_sender: Option<Sender<NotificationTuple>>,
 }
 
 impl TransportMock {
     pub(crate) fn new(
         remote_mock_uri: UUri,
-        notification_properties_sender: Sender<NotificationTuple>,
-        remote_state_sender: Option<Sender<NotificationTuple>>,
+        send_sender: Sender<NotificationTuple>,
+        invoke_method_sender: Option<Sender<NotificationTuple>>,
     ) -> TransportMock {
         TransportMock {
             own_uri: remote_mock_uri,
-            notification_properties_sender,
-            remote_state_sender,
+            send_sender,
+            invoke_method_sender,
         }
     }
 }
@@ -66,7 +66,7 @@ impl UTransport for TransportMock {
             update.topic.unwrap_or_default(),
             update.status.unwrap_or_default(),
         );
-        self.notification_properties_sender
+        self.send_sender
             .send(tuple)
             .await
             .expect("Error sending update properties");
@@ -134,7 +134,7 @@ impl RpcClient for TransportMock {
                     ..Default::default()
                 };
 
-                if let Some(remote_state_sender) = &self.remote_state_sender {
+                if let Some(remote_state_sender) = &self.invoke_method_sender {
                     let tuple = (
                         subscriber.clone(),
                         susresp.topic.as_ref().unwrap_or_default().clone(),
@@ -168,5 +168,86 @@ impl RpcClient for TransportMock {
                 "Not implemented".to_string(),
             ))),
         }
+    }
+}
+
+// The idea here is to have a simple mirroring-transport, which just gives back whatever response object was sent in the first place
+pub(crate) struct MockForListeners<T: Message> {
+    send_sender: Sender<Result<T, UStatus>>,
+}
+
+impl<T> MockForListeners<T>
+where
+    T: Message,
+{
+    pub(crate) fn new(send_sender: Sender<Result<T, UStatus>>) -> MockForListeners<T> {
+        MockForListeners::<T> { send_sender }
+    }
+}
+
+#[async_trait]
+impl<T> UTransport for MockForListeners<T>
+where
+    T: Message,
+{
+    async fn send(&self, message: UMessage) -> Result<(), UStatus> {
+        let msg: Result<T, UStatus> = if message
+            .attributes
+            .commstatus
+            .unwrap_or_default()
+            .enum_value_or_default()
+            == UCode::OK
+        {
+            Ok(message.extract_protobuf::<T>().unwrap())
+        } else {
+            Err(message.extract_protobuf::<UStatus>().unwrap())
+        };
+
+        self.send_sender
+            .send(msg)
+            .await
+            .map_err(|e| UStatus::fail_with_code(UCode::INTERNAL, e.to_string()))
+    }
+
+    async fn receive(
+        &self,
+        _source_filter: &UUri,
+        _sink_filter: Option<&UUri>,
+    ) -> Result<UMessage, UStatus> {
+        todo!()
+    }
+
+    async fn register_listener(
+        &self,
+        _source_filter: &UUri,
+        _sink_filter: Option<&UUri>,
+        _listener: Arc<dyn UListener>,
+    ) -> Result<(), UStatus> {
+        todo!()
+    }
+
+    async fn unregister_listener(
+        &self,
+        _source_filter: &UUri,
+        _sink_filter: Option<&UUri>,
+        _listener: Arc<dyn UListener>,
+    ) -> Result<(), UStatus> {
+        todo!()
+    }
+}
+
+#[async_trait]
+impl<T> RpcClient for MockForListeners<T>
+where
+    T: Message,
+{
+    async fn invoke_method(
+        &self,
+        _method: UUri,
+        _call_options: CallOptions,
+        _payload: Option<UPayload>,
+    ) -> Result<Option<UPayload>, ServiceInvocationError> {
+        // We're doing nothing here
+        Ok(None)
     }
 }

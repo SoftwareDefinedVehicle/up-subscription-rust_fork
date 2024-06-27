@@ -15,6 +15,6 @@ use std::sync::Once;
 
 static INIT: Once = Once::new();
 
-pub(super) fn before_test() {
+pub(crate) fn before_test() {
     INIT.call_once(env_logger::init);
 }

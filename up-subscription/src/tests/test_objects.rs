@@ -11,8 +11,18 @@
  * SPDX-License-Identifier: Apache-2.0
  ********************************************************************************/
 
-use up_rust::core::usubscription::{SubscriberInfo, SubscriptionRequest, UnsubscribeRequest};
-use up_rust::UUri;
+use protobuf::Message;
+use std::sync::Arc;
+use tokio::sync::mpsc::{self, Receiver};
+
+use up_rust::core::usubscription::{
+    SubscriberInfo, SubscriptionRequest, SubscriptionStatus, UnsubscribeRequest,
+};
+use up_rust::{UStatus, UUri};
+
+use crate::test_transports::MockForListeners;
+use crate::tests::test_transports::TransportMock;
+use crate::usubscription::USubscriptionService;
 
 const REMOTE_AUTHORITY: &str = "REMOTE";
 const USUBSCRIPTION_SERVICE_ID: u32 = 0x0000_1111;
@@ -54,7 +64,61 @@ const TOPIC_REMOTE2_ID: u32 = 0x0000_6000;
 const TOPIC_REMOTE2_VERSION: u32 = 0x0000_0001;
 const TOPIC_REMOTE2_RESOURCE: u32 = 0x2000_0000;
 
-pub(super) fn subscriber_info1() -> SubscriberInfo {
+pub(crate) const UENTITY_OWN_URI: &str = "/7777/1/0";
+
+pub(crate) type NotificationTuple = (SubscriberInfo, UUri, SubscriptionStatus);
+
+pub(crate) fn get_usubscription_mock(
+    invoke_method_channel: bool,
+) -> (
+    Arc<USubscriptionService>,
+    Receiver<NotificationTuple>,
+    Option<Receiver<NotificationTuple>>,
+) {
+    let (send_sender, send_receiver) = mpsc::channel::<NotificationTuple>(1);
+
+    let (invoke_method_sender, invoke_method_receiver) = if invoke_method_channel {
+        let (sender, receiver) = mpsc::channel::<NotificationTuple>(1);
+        (Some(sender), Some(receiver))
+    } else {
+        (None, None)
+    };
+
+    let up_client_mock = Arc::new(TransportMock::new(
+        remote_usubscription_service_uri(),
+        send_sender,
+        invoke_method_sender,
+    ));
+
+    (
+        Arc::new(USubscriptionService::new(
+            Some("LocalMockUsub"),
+            local_usubscription_service_uri(),
+            up_client_mock.clone(),
+            up_client_mock.clone(),
+        )),
+        send_receiver,
+        invoke_method_receiver,
+    )
+}
+
+pub(crate) fn get_mock_for_listeners<T: Message>(
+) -> (Arc<USubscriptionService>, Receiver<Result<T, UStatus>>) {
+    let (send_sender, send_receiver) = mpsc::channel::<Result<T, UStatus>>(1);
+    let up_client_mock = Arc::new(MockForListeners::new(send_sender));
+
+    (
+        Arc::new(USubscriptionService::new(
+            Some("LocalMockUsub"),
+            local_usubscription_service_uri(),
+            up_client_mock.clone(),
+            up_client_mock.clone(),
+        )),
+        send_receiver,
+    )
+}
+
+pub(crate) fn subscriber_info1() -> SubscriberInfo {
     SubscriberInfo {
         uri: Some(UUri {
             authority_name: String::default(),
@@ -68,7 +132,7 @@ pub(super) fn subscriber_info1() -> SubscriberInfo {
     }
 }
 
-pub(super) fn subscriber_info2() -> SubscriberInfo {
+pub(crate) fn subscriber_info2() -> SubscriberInfo {
     SubscriberInfo {
         uri: Some(UUri {
             authority_name: String::default(),
@@ -82,7 +146,7 @@ pub(super) fn subscriber_info2() -> SubscriberInfo {
     }
 }
 
-pub(super) fn subscriber_info3() -> SubscriberInfo {
+pub(crate) fn subscriber_info3() -> SubscriberInfo {
     SubscriberInfo {
         uri: Some(UUri {
             authority_name: String::default(),
@@ -96,14 +160,14 @@ pub(super) fn subscriber_info3() -> SubscriberInfo {
     }
 }
 
-pub(super) fn bad_subscriber_info() -> SubscriberInfo {
+pub(crate) fn bad_subscriber_info() -> SubscriberInfo {
     SubscriberInfo {
         uri: Some(UUri::default()).into(),
         ..Default::default()
     }
 }
 
-pub fn local_usubscription_service_uri() -> UUri {
+pub(crate) fn local_usubscription_service_uri() -> UUri {
     UUri {
         authority_name: String::default(),
         ue_id: USUBSCRIPTION_SERVICE_ID,
@@ -112,7 +176,7 @@ pub fn local_usubscription_service_uri() -> UUri {
     }
 }
 
-pub fn remote_usubscription_service_uri() -> UUri {
+pub(crate) fn remote_usubscription_service_uri() -> UUri {
     UUri {
         authority_name: REMOTE_AUTHORITY.to_string(),
         ue_id: USUBSCRIPTION_SERVICE_ID,
@@ -121,7 +185,7 @@ pub fn remote_usubscription_service_uri() -> UUri {
     }
 }
 
-pub fn notification_topic_uri() -> UUri {
+pub(crate) fn notification_topic_uri() -> UUri {
     UUri {
         authority_name: String::default(),
         ue_id: NOTIFICATION_TOPIC_ID,
@@ -131,7 +195,7 @@ pub fn notification_topic_uri() -> UUri {
     }
 }
 
-pub fn local_topic1_uri() -> UUri {
+pub(crate) fn local_topic1_uri() -> UUri {
     UUri {
         authority_name: String::default(),
         ue_id: TOPIC_LOCAL1_ID,
@@ -141,7 +205,7 @@ pub fn local_topic1_uri() -> UUri {
     }
 }
 
-pub fn local_topic2_uri() -> UUri {
+pub(crate) fn local_topic2_uri() -> UUri {
     UUri {
         authority_name: String::default(),
         ue_id: TOPIC_LOCAL2_ID,
@@ -151,7 +215,7 @@ pub fn local_topic2_uri() -> UUri {
     }
 }
 
-pub fn local_topic3_uri() -> UUri {
+pub(crate) fn local_topic3_uri() -> UUri {
     UUri {
         authority_name: String::default(),
         ue_id: TOPIC_LOCAL3_ID,
@@ -160,11 +224,11 @@ pub fn local_topic3_uri() -> UUri {
         ..Default::default()
     }
 }
-pub(super) fn bad_local_topic_uri() -> UUri {
+pub(crate) fn bad_local_topic_uri() -> UUri {
     UUri::default()
 }
 
-pub fn remote_topic1_uri() -> UUri {
+pub(crate) fn remote_topic1_uri() -> UUri {
     UUri {
         authority_name: REMOTE_AUTHORITY.into(),
         ue_id: TOPIC_REMOTE1_ID,
@@ -174,7 +238,7 @@ pub fn remote_topic1_uri() -> UUri {
     }
 }
 
-pub fn remote_topic2_uri() -> UUri {
+pub(crate) fn remote_topic2_uri() -> UUri {
     UUri {
         authority_name: REMOTE_AUTHORITY.into(),
         ue_id: TOPIC_REMOTE2_ID,
@@ -185,7 +249,7 @@ pub fn remote_topic2_uri() -> UUri {
 }
 
 #[allow(dead_code)]
-pub(super) fn subscription_request(topic: UUri, subscriber: SubscriberInfo) -> SubscriptionRequest {
+pub(crate) fn subscription_request(topic: UUri, subscriber: SubscriberInfo) -> SubscriptionRequest {
     SubscriptionRequest {
         topic: Some(topic).into(),
         subscriber: Some(subscriber).into(),
@@ -194,7 +258,7 @@ pub(super) fn subscription_request(topic: UUri, subscriber: SubscriberInfo) -> S
 }
 
 #[allow(dead_code)]
-pub(super) fn unsubscribe_request(topic: UUri, subscriber: SubscriberInfo) -> UnsubscribeRequest {
+pub(crate) fn unsubscribe_request(topic: UUri, subscriber: SubscriberInfo) -> UnsubscribeRequest {
     UnsubscribeRequest {
         topic: Some(topic).into(),
         subscriber: Some(subscriber).into(),

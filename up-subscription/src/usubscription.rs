@@ -231,7 +231,7 @@ impl USubscriptionService {
             .up_client
             .invoke_proto_method(
                 remote_usubscription_uri,
-                CallOptions::new(UP_REMOTE_TTL, None, None),
+                CallOptions::new(UP_REMOTE_TTL, None, None, None),
                 remote_subscription_request,
             )
             .await
@@ -301,7 +301,7 @@ impl USubscriptionService {
             .up_client
             .invoke_proto_method(
                 remote_usubscription_uri,
-                CallOptions::new(UP_REMOTE_TTL, None, None),
+                CallOptions::new(UP_REMOTE_TTL, None, None, None),
                 remote_unsubscribe_request,
             )
             .await
