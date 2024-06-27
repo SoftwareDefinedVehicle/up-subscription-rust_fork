@@ -13,7 +13,6 @@
 
 use async_trait::async_trait;
 use std::sync::Arc;
-use tokio::task;
 
 use up_rust::core::usubscription::{NotificationsRequest, USubscription};
 use up_rust::{UCode, UListener, UMessage, UMessageBuilder, UStatus, UUID};
@@ -33,39 +32,36 @@ impl UnregisterForNotificationsListener {
 
 #[async_trait]
 impl UListener for UnregisterForNotificationsListener {
-    // Perform any business logic related to a fetch subscriptions request, deferred into a task
+    // Perform any business logic related to a fetch subscriptions request
     async fn on_receive(&self, msg: UMessage) {
         let notifications_request: NotificationsRequest = msg
             .extract_protobuf()
             .expect("Expected NotificationsRequest payload");
 
-        let message_attributes_cloned = msg.attributes.get_or_default().clone();
-        let up_subscription_cloned = self.up_subscription.clone();
-        let up_transport_cloned = self.up_subscription.up_transport.clone();
+        // 1. Check with backend
+        let message = match self
+            .up_subscription
+            .unregister_for_notifications(notifications_request.clone())
+            .await
+        {
+            Ok(()) => UMessageBuilder::response_for_request(msg.attributes.get_or_default())
+                .with_message_id(UUID::build())
+                .with_comm_status(UCode::OK)
+                .build_with_protobuf_payload(&UStatus::ok())
+                .expect("Error building response message"),
+            Err(status) => UMessageBuilder::response_for_request(msg.attributes.get_or_default())
+                .with_message_id(UUID::build())
+                .with_comm_status(status.code.enum_value_or(UCode::UNKNOWN))
+                .build_with_protobuf_payload(&status)
+                .expect("Error building response message"),
+        };
 
-        task::spawn(async move {
-            let message = match up_subscription_cloned
-                .unregister_for_notifications(notifications_request.clone())
-                .await
-            {
-                Ok(()) => UMessageBuilder::response_for_request(&message_attributes_cloned)
-                    .with_message_id(UUID::build())
-                    .with_comm_status(UCode::OK)
-                    .build_with_protobuf_payload(&UStatus::ok())
-                    .expect("Error building response message"),
-                Err(status) => UMessageBuilder::response_for_request(&message_attributes_cloned)
-                    .with_message_id(UUID::build())
-                    .with_comm_status(status.code.enum_value_or(UCode::UNKNOWN))
-                    .build_with_protobuf_payload(&status)
-                    .expect("Error building response message"),
-            };
-
-            // 2. Respond error status to caller
-            up_transport_cloned
-                .send(message)
-                .await
-                .expect("Error sending response message");
-        });
+        // 2. Respond to caller
+        self.up_subscription
+            .up_transport
+            .send(message)
+            .await
+            .expect("Error sending response message");
     }
 
     async fn on_error(&self, err: UStatus) {

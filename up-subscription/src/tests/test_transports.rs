@@ -191,6 +191,27 @@ where
     T: Message,
 {
     async fn send(&self, message: UMessage) -> Result<(), UStatus> {
+        if message.attributes.is_none() {
+            return self
+                .send_sender
+                .send(Err(UStatus::fail_with_code(
+                    UCode::UNKNOWN,
+                    "UMessage is missing message attributes",
+                )))
+                .await
+                .map_err(|e| UStatus::fail_with_code(UCode::INTERNAL, e.to_string()));
+        }
+        if message.attributes.as_ref().unwrap().commstatus.is_none() {
+            return self
+                .send_sender
+                .send(Err(UStatus::fail_with_code(
+                    UCode::UNKNOWN,
+                    "UMessage is missing commstatus attribute",
+                )))
+                .await
+                .map_err(|e| UStatus::fail_with_code(UCode::INTERNAL, e.to_string()));
+        }
+
         let msg: Result<T, UStatus> = if message
             .attributes
             .commstatus

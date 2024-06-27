@@ -13,10 +13,9 @@
 
 use async_trait::async_trait;
 use std::sync::Arc;
-use tokio::task;
 
 use up_rust::core::usubscription::{USubscription, UnsubscribeRequest};
-use up_rust::{UListener, UMessage, UMessageBuilder, UStatus, UUID};
+use up_rust::{UCode, UListener, UMessage, UMessageBuilder, UStatus, UUID};
 
 use crate::USubscriptionService;
 
@@ -40,31 +39,28 @@ impl UListener for UnsubscribeListener {
             .extract_protobuf()
             .expect("Expected UnsubscribeRequest payload");
 
-        let message_attributes_cloned = msg.attributes.get_or_default().clone();
-        let up_subscription_cloned = self.up_subscription.clone();
-        let up_transport_cloned = self.up_subscription.up_transport.clone();
+        // 1. Check with backend
+        let status = match self
+            .up_subscription
+            .unsubscribe(unsubscribe_request.clone())
+            .await
+        {
+            Ok(()) => UStatus::ok(),
+            Err(status) => status,
+        };
 
-        task::spawn(async move {
-            // 1. Check with bookkeeping
-            let status = match up_subscription_cloned
-                .unsubscribe(unsubscribe_request.clone())
-                .await
-            {
-                Ok(()) => UStatus::ok(),
-                Err(status) => status,
-            };
+        let message = UMessageBuilder::response_for_request(msg.attributes.get_or_default())
+            .with_message_id(UUID::build())
+            .with_comm_status(status.code.enum_value_or(UCode::INTERNAL))
+            .build_with_protobuf_payload(&status)
+            .expect("Error building response message");
 
-            let message = UMessageBuilder::response_for_request(&message_attributes_cloned)
-                .with_message_id(UUID::build())
-                .build_with_protobuf_payload(&status)
-                .expect("Error building response message");
-
-            // 2. Respond to caller immediately
-            up_transport_cloned
-                .send(message)
-                .await
-                .expect("Error sending response message");
-        });
+        // 2. Respond to caller
+        self.up_subscription
+            .up_transport
+            .send(message)
+            .await
+            .expect("Error sending response message");
     }
 
     async fn on_error(&self, err: UStatus) {
@@ -77,30 +73,39 @@ mod tests {
     use std::str::FromStr;
     use test_case::test_case;
 
-    use up_rust::core::usubscription::{SubscriptionResponse, UnsubscribeResponse};
-    use up_rust::UUri;
+    use up_rust::{core::usubscription::UnsubscribeResponse, UCode, UUri};
 
     use super::*;
-    use crate::helpers;
+
     use crate::tests::{test_lib, test_objects};
     use crate::usubscription;
 
-    #[test_case(UUri::default(); "Standard local subscription")]
+    // Test simple turnaround from request going into listener and getting a matching response out.
+    // Note: This might generate an error message in passing, due the the mock not implementing some business logic.
+    #[test_case(test_objects::local_topic1_uri(), UCode::OK; "Standard local unsubscribe")]
+    #[test_case(test_objects::remote_topic1_uri(), UCode::OK; "Standard remote unsubscribe")]
+    #[test_case(UUri::default(), UCode::INVALID_ARGUMENT; "Empty topic UUri")]
     #[tokio::test]
-    async fn test_unsubscribe_listener(_uuri: UUri) {
+    async fn test_unsubscribe_listener(topic: UUri, expected_code: UCode) {
         // setup
         test_lib::before_test();
         let (usubscription, mut send_receiver) =
             test_objects::get_mock_for_listeners::<UnsubscribeResponse>();
         let listener = UnsubscribeListener::new(usubscription.clone());
 
+        // subscribe first - explicitly ignore potential errors, as we might try invalid data for some test scenarios
+        let _ = usubscription
+            .subscribe(test_objects::subscription_request(
+                topic.clone(),
+                test_objects::subscriber_info1(),
+            ))
+            .await;
+
         // create request object(s)
-        let unsubscribe_request = test_objects::unsubscribe_request(
-            test_objects::local_topic1_uri(),
-            test_objects::subscriber_info1(),
-        );
+        let unsubscribe_request =
+            test_objects::unsubscribe_request(topic, test_objects::subscriber_info1());
         let msg = UMessageBuilder::request(
-            usubscription.subscribe_uuri(),
+            usubscription.unsubscribe_uuri(),
             UUri::from_str(test_objects::UENTITY_OWN_URI).unwrap(),
             usubscription::UP_REMOTE_TTL,
         )
@@ -111,10 +116,26 @@ mod tests {
         listener.on_receive(msg).await;
 
         // receive and assert response
-        let received = send_receiver.recv().await;
-        assert!(
-            received.is_some(),
-            "Expected to receive some subscribe response"
-        );
+        let received = send_receiver
+            .recv()
+            .await
+            .expect("Expected to receive some subscribe response")
+            // A bit flaky - but this is to have a feedback channel for the specific condition where the response message sent from
+            // the listener is missing the commstatus attribute - refer to `MockForListeners.send()`. Using UCode::UNKNOWN for this
+            // condition, as this isn't returned anywhere else from the usubscription implementation.
+            .inspect_err(|e| {
+                if e.code == UCode::UNKNOWN.into() {
+                    let msg = e.message.clone().unwrap();
+                    panic!("Problem with return message sent by listener: {msg}");
+                }
+            });
+
+        if expected_code == UCode::OK {
+            assert!(received.is_ok(), "Expected positive/Ok response");
+        } else {
+            assert!(received.is_err(), "Expected negative/Err response");
+            let status = received.err().unwrap();
+            assert_eq!(status.code, expected_code.into());
+        }
     }
 }
