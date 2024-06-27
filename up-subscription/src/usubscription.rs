@@ -608,6 +608,25 @@ impl USubscription for USubscriptionService {
             subscriber, topic, ..
         } = notifications_register_request;
 
+        if topic.is_empty() {
+            return Err(UStatus::fail_with_code(
+                UCode::INVALID_ARGUMENT,
+                "Empty notification UUri",
+            ));
+        }
+        if !self.is_local_topic(&topic) {
+            return Err(UStatus::fail_with_code(
+                UCode::INVALID_ARGUMENT,
+                "Cannot use remote UUri for notifications",
+            ));
+        }
+        if subscriber.is_empty() || subscriber.uri.is_empty() {
+            return Err(UStatus::fail_with_code(
+                UCode::INVALID_ARGUMENT,
+                "Empty SubscriberInfo or subscriber UUri",
+            ));
+        }
+
         if let Err(e) = self.notification_sender.send(Event::AddNotifyee {
             subscriber: subscriber.uri.get_or_default().clone(),
             topic: topic.get_or_default().clone(),
@@ -624,6 +643,14 @@ impl USubscription for USubscriptionService {
         debug!("Got UnregisterForNotifications");
 
         let NotificationsRequest { subscriber, .. } = notifications_unregister_request;
+
+        if subscriber.is_empty() || subscriber.uri.is_empty() {
+            return Err(UStatus::fail_with_code(
+                UCode::INVALID_ARGUMENT,
+                "Empty SubscriberInfo or subscriber UUri",
+            ));
+        }
+
         if let Err(e) = self.notification_sender.send(Event::RemoveNotifyee {
             subscriber: subscriber.uri.get_or_default().clone(),
         }) {

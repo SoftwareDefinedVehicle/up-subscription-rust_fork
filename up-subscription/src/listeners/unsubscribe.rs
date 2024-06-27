@@ -32,7 +32,7 @@ impl UnsubscribeListener {
 
 #[async_trait]
 impl UListener for UnsubscribeListener {
-    // Perform any business logic related to a unsubscribe request, deferred into a task
+    // Perform any business logic related to a `UnsubscribeRequest`
     // Implements https://github.com/eclipse-uprotocol/up-spec/tree/main/up-l3/usubscription/v3#52-unsubscribe
     async fn on_receive(&self, msg: UMessage) {
         let unsubscribe_request: UnsubscribeRequest = msg

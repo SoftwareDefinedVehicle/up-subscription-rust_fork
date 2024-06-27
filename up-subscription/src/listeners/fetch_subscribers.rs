@@ -32,7 +32,7 @@ impl FetchSubscribersListener {
 
 #[async_trait]
 impl UListener for FetchSubscribersListener {
-    // Perform any business logic related to a fetch subscriptions request
+    // Perform any business logic related to a `FetchSubscribersRequest`
     async fn on_receive(&self, msg: UMessage) {
         let fetchsubscribers_request: FetchSubscribersRequest = msg
             .extract_protobuf()

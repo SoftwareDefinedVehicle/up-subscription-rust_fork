@@ -32,7 +32,7 @@ impl SubscribeListener {
 
 #[async_trait]
 impl UListener for SubscribeListener {
-    // Perform any business logic related to a subscription request
+    // Perform any business logic related to a `SubscriptionRequest`
     // Implements https://github.com/eclipse-uprotocol/up-spec/tree/main/up-l3/usubscription/v3#51-subscription
     async fn on_receive(&self, msg: UMessage) {
         let subscription_request: SubscriptionRequest = msg
