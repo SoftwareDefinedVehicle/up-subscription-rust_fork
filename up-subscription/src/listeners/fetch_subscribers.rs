@@ -71,10 +71,79 @@ impl UListener for FetchSubscribersListener {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
     use test_case::test_case;
+
+    use up_rust::core::usubscription::FetchSubscribersResponse;
     use up_rust::UUri;
 
-    #[test_case(UUri::default(); "Special listen UUri")]
+    use super::*;
+    use crate::tests::{test_lib, test_objects};
+    use crate::usubscription;
+
+    // Test simple turnaround from request going into listener and getting a matching response out.
+    // Note: This might generate an error message in passing, due the the mock not implementing some business logic.
+    #[test_case(test_objects::notification_topic_uri(), 1, UCode::OK; "Standard subscription")]
+    #[test_case(test_objects::remote_topic1_uri(), 0, UCode::OK; "Remote susbcription - will stay _PENDING in the mock, and not count into active subscribers")]
+    #[test_case(UUri::default(), 0, UCode::OK; "Empty topic, should still return a valid (0) value")]
     #[tokio::test]
-    async fn test_subscribe_listener(_uuri: UUri) {}
+    async fn test_fetch_subscribers_listener(
+        topic: UUri,
+        expected_count: usize,
+        expected_code: UCode,
+    ) {
+        // setup
+        test_lib::before_test();
+        let (usubscription, mut send_receiver) =
+            test_objects::get_mock_for_listeners::<FetchSubscribersResponse>();
+        let listener = FetchSubscribersListener::new(usubscription.clone());
+
+        // subscribe first - explicitly ignore potential errors, as we might try invalid data for some test scenarios
+        let _ = usubscription
+            .subscribe(test_objects::subscription_request(
+                topic.clone(),
+                test_objects::subscriber_info1(),
+            ))
+            .await;
+
+        // create request object(s)
+        let fetch_susbcribers_request = FetchSubscribersRequest {
+            topic: Some(topic).into(),
+            ..Default::default()
+        };
+        let msg = UMessageBuilder::request(
+            usubscription.fetch_subscribers_uuri(),
+            UUri::from_str(test_objects::UENTITY_OWN_URI).unwrap(),
+            usubscription::UP_REMOTE_TTL,
+        )
+        .build_with_protobuf_payload(&fetch_susbcribers_request)
+        .unwrap();
+
+        // send request
+        listener.on_receive(msg).await;
+
+        // receive and assert response
+        let received = send_receiver
+            .recv()
+            .await
+            .expect("Expected to receive some response")
+            // A bit flaky - but this is to have a feedback channel for the specific condition where the response message sent from
+            // the listener is missing the commstatus attribute - refer to `MockForListeners.send()`. Using UCode::UNKNOWN for this
+            // condition, as this isn't returned anywhere else from the usubscription implementation.
+            .inspect_err(|e| {
+                if e.code == UCode::UNKNOWN.into() {
+                    let msg = e.message.clone().unwrap();
+                    panic!("Problem with return message sent by listener: {msg}");
+                }
+            });
+
+        if expected_code == UCode::OK {
+            assert!(received.is_ok(), "Expected positive/Ok response");
+            assert_eq!(received.unwrap().subscribers.len(), expected_count);
+        } else {
+            assert!(received.is_err(), "Expected negative/Err response");
+            let status = received.err().unwrap();
+            assert_eq!(status.code, expected_code.into());
+        }
+    }
 }

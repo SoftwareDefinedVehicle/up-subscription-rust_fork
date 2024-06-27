@@ -17,8 +17,10 @@ use futures::executor::block_on;
 use log::*;
 use protobuf::MessageField;
 use std::collections::HashMap;
+use std::ptr::read;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::{self, UnboundedSender};
+use up_rust::RequestValidator;
 
 use crate::helpers::{self, *};
 use crate::usubscription_notification::{self, Event};
@@ -557,7 +559,9 @@ impl USubscription for USubscriptionService {
     ) -> Result<FetchSubscriptionsResponse, UStatus> {
         debug!("Got FetchSubscriptionsRequest");
 
-        let FetchSubscriptionsRequest { offset, .. } = fetch_subscriptions_request;
+        let FetchSubscriptionsRequest {
+            request, offset, ..
+        } = fetch_subscriptions_request;
         let offset = offset.unwrap_or(0) as usize;
 
         // Lock the mutex to access the HashMap
@@ -581,6 +585,8 @@ impl USubscription for USubscriptionService {
                 }
             }
         }
+
+        if let Some(request) = request {};
 
         // Trying to make some use of the offset and has_more_records fields...
         subscriptions.drain(..offset);

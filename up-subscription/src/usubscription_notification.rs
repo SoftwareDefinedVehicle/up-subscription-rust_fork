@@ -13,6 +13,7 @@
 
 use log::*;
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -20,6 +21,8 @@ use up_rust::core::usubscription::{SubscriberInfo, SubscriptionStatus, Update};
 use up_rust::{UMessageBuilder, UTransport, UUri, UUID};
 
 use crate::usubscription;
+
+const UP_NOTIFICATION_CHANNEL: &str = "up:/core.usubscription/3/subscriptions#Update";
 
 #[derive(Debug)]
 pub(crate) enum Event {
@@ -72,6 +75,21 @@ pub(crate) async fn noticiation_engine(
                     ..Default::default()
                 };
 
+                // Send Update message to general notification channel
+                // as per usubscription.proto RegisterForNotifications(NotificationsRequest)
+                if let Ok(update_msg) = UMessageBuilder::publish(
+                    UUri::from_str(UP_NOTIFICATION_CHANNEL)
+                        .expect("This really should have worked"),
+                )
+                .with_message_id(UUID::build())
+                .build_with_protobuf_payload(&update)
+                {
+                    if let Err(e) = up_transport.send(update_msg).await {
+                        error!("Error sending subscription-change update notification: {e}");
+                    }
+                }
+
+                // Send Update message to any dedicated registered notification-subscribers
                 for notification_topic in notification_topics.values() {
                     debug!(
                         "Sending notification to ({}): topic {}, subscriber {}, status {}",

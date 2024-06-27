@@ -118,7 +118,7 @@ mod tests {
         let received = send_receiver
             .recv()
             .await
-            .expect("Expected to receive some subscribe response")
+            .expect("Expected to receive some response")
             // A bit flaky - but this is to have a feedback channel for the specific condition where the response message sent from
             // the listener is missing the commstatus attribute - refer to `MockForListeners.send()`. Using UCode::UNKNOWN for this
             // condition, as this isn't returned anywhere else from the usubscription implementation.

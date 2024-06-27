@@ -83,8 +83,10 @@ mod tests {
 
     // Test simple turnaround from request going into listener and getting a matching response out.
     // Note: This might generate an error message in passing, due the the mock not implementing some business logic.
-    #[test_case(test_objects::subscriber_info1(), test_objects::notification_topic_uri(), UCode::OK; "Valid subscriber, standard notification topic")]
-    #[test_case(test_objects::subscriber_info1(), test_objects::remote_topic1_uri(), UCode::OK; "Valid subscriber, remote notification topic")]
+    #[test_case(test_objects::subscriber_info1(), test_objects::notification_topic_uri(), UCode::OK; "Standard notification topic")]
+    #[test_case(test_objects::subscriber_info1(), test_objects::remote_topic1_uri(), UCode::OK; "Remote notification topic - ignored in unsubscribe")]
+    #[test_case(SubscriberInfo::default(), test_objects::notification_topic_uri(), UCode::INVALID_ARGUMENT; "Empty subscriber")]
+    #[test_case(test_objects::subscriber_info1(), UUri::default(), UCode::OK; "Empty notification topic UUri - ignored in unsubscribe")]
     #[test_case(SubscriberInfo::default(), UUri::default(), UCode::INVALID_ARGUMENT; "Empty subscriber, empty notification topic UUri")]
     #[tokio::test]
     async fn test_unregister_for_notifications_listener(
@@ -119,7 +121,7 @@ mod tests {
         let received = send_receiver
             .recv()
             .await
-            .expect("Expected to receive some subscribe response")
+            .expect("Expected to receive some response")
             // A bit flaky - but this is to have a feedback channel for the specific condition where the response message sent from
             // the listener is missing the commstatus attribute - refer to `MockForListeners.send()`. Using UCode::UNKNOWN for this
             // condition, as this isn't returned anywhere else from the usubscription implementation.
