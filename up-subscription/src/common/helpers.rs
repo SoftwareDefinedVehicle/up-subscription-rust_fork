@@ -15,6 +15,7 @@ use log::*;
 use std::future::Future;
 use std::sync::Once;
 use tokio::task;
+use up_rust::{UCode, UStatus, UUri};
 
 static INIT: Once = Once::new();
 
@@ -32,4 +33,33 @@ where
             error!("{}", e)
         }
     })
+}
+
+/// Subscription topics must
+/// - not be empty
+/// - not contain any wildcars
+// [impl->req~usubscribe-uri-not-empty~1]
+// [impl->req~usubscribe-uri-authority~1]
+// [impl->req~usubscribe-uri-entity-id~1]
+// [impl->req~usubscribe-uri-resource-id~1]
+// [impl->req~usubscribe-uri-version-major~1]
+pub(crate) fn is_valid_topic(topic: &UUri) -> Result<(), UStatus> {
+    if topic.is_empty() {
+        return Err(UStatus::fail_with_code(
+            UCode::INVALID_ARGUMENT,
+            "Empty subscription topic",
+        ));
+    }
+    if topic.has_wildcard_authority()
+        || topic.has_wildcard_entity_id()
+        || topic.has_wildcard_resource_id()
+        || topic.has_wildcard_version()
+    {
+        return Err(UStatus::fail_with_code(
+            UCode::INVALID_ARGUMENT,
+            "Subscription topics are not allowed to contain wildcards",
+        ));
+    }
+
+    Ok(())
 }

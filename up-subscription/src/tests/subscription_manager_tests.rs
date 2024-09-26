@@ -104,6 +104,49 @@ mod tests {
             CommandSender { command_sender }
         }
 
+        // Allows configuration of expected invoke_method() calls from subscription manager, returns an Err(ServiceInvocationError)
+        fn new_with_client_options_err_response<R: MessageFull>(
+            expected_remote_method: UUri,
+            expected_call_options: CallOptions,
+            expected_request: R,
+            times: usize,
+        ) -> Self {
+            let shutdown_notification = Arc::new(Notify::new());
+
+            let (command_sender, command_receiver) =
+                mpsc::channel::<SubscriptionEvent>(DEFAULT_COMMAND_BUFFER_SIZE);
+            let mut client_mock = test_lib::mocks::MockRpcClientMock::default();
+
+            let expected_request_payload =
+                UPayload::try_from_protobuf(expected_request).expect("Test/mock request data bad");
+
+            client_mock
+                .expect_invoke_method()
+                .times(times)
+                .withf(move |remote_method, call_options, request_payload| {
+                    *remote_method == expected_remote_method
+                        && test_lib::is_equivalent_calloptions(call_options, &expected_call_options)
+                        && *request_payload == Some(expected_request_payload.clone())
+                })
+                .returning(move |_u, _o, _p| {
+                    Err(up_rust::communication::ServiceInvocationError::Internal(
+                        "Not having this".to_string(),
+                    ))
+                });
+
+            helpers::spawn_and_log_error(async move {
+                handle_message(
+                    test_lib::helpers::local_usubscription_service_uri(),
+                    Arc::new(client_mock),
+                    command_receiver,
+                    shutdown_notification,
+                )
+                .await;
+                Ok(())
+            });
+            CommandSender { command_sender }
+        }
+
         async fn subscribe(
             &self,
             topic: UUri,
@@ -210,6 +253,7 @@ mod tests {
         }
     }
 
+    // [utest->dsn~usubscribe-state-machine~1]
     #[test_case(vec![(UUri::default(), SubscriberInfo::default())]; "Default susbcriber-topic")]
     #[test_case(vec![(UUri::default(), SubscriberInfo::default()), (UUri::default(), SubscriberInfo::default())]; "Multiple default susbcriber-topic")]
     #[test_case(vec![
@@ -241,9 +285,8 @@ mod tests {
             assert!(result.is_ok());
 
             // Verify operation result content
-            // TODO Revisit with next release of up-rust!
-            let _subscription_status = result.unwrap();
-            // assert_eq!(subscription_status.state.unwrap(), State::SUBSCRIBED);
+            let subscription_status = result.unwrap();
+            assert_eq!(subscription_status.state.unwrap(), State::SUBSCRIBED);
         }
 
         // Verify iternal bookeeping
@@ -255,8 +298,14 @@ mod tests {
         assert_eq!(topic_subscribers, desired_state);
     }
 
-    #[test_case(test_lib::helpers::remote_topic1_uri(), State::SUBSCRIBE_PENDING; "Remote topic, remote state SUBSCRIBED_PENDING")]
+    // [utest->dsn~usubscribe-state-machine~1]
+    // [utest->req~usubscribe-state-remote-sub~1]
+    // [utest->req~usubscribe-state-remote-sub-state~1]
+    // [utest->req~usubscribe-state-remote-sub-response-positive~1]
+    // [utest->req~usubscribe-remote_subscribe-subscriber-change~1]
     #[test_case(test_lib::helpers::remote_topic1_uri(), State::SUBSCRIBED; "Remote topic, remote state SUBSCRIBED")]
+    #[test_case(test_lib::helpers::remote_topic1_uri(), State::UNSUBSCRIBED; "Remote topic, remote state UNSUBSCRIBED")]
+    #[test_case(test_lib::helpers::remote_topic1_uri(), State::SUBSCRIBE_PENDING; "Remote topic, remote state SUBSCRIBED_PENDING")]
     #[tokio::test]
     async fn test_remote_subscribe(remote_topic: UUri, remote_state: State) {
         helpers::init_once();
@@ -320,6 +369,63 @@ mod tests {
         );
     }
 
+    // [utest->req~usubscribe-remote_subscribe-subscriber-change~1]
+    #[test_case(test_lib::helpers::remote_topic1_uri(), State::SUBSCRIBE_PENDING; "Remote topic, remote state SUBSCRIBED")]
+    #[tokio::test]
+    async fn test_remote_subscribe_error(remote_topic: UUri, remote_state: State) {
+        helpers::init_once();
+
+        // Prepare things
+        let remote_method = make_remote_subscribe_uuri(&remote_topic);
+        let remote_subscription_request = SubscriptionRequest {
+            topic: Some(remote_topic.clone()).into(),
+            subscriber: Some(SubscriberInfo {
+                uri: Some(test_lib::helpers::local_usubscription_service_uri()).into(),
+                ..Default::default()
+            })
+            .into(),
+            ..Default::default()
+        };
+        let remote_call_options =
+            CallOptions::for_rpc_request(UP_REMOTE_TTL, None, None, Some(UPriority::UPRIORITY_CS4));
+        let command_sender =
+            CommandSender::new_with_client_options_err_response::<SubscriptionRequest>(
+                remote_method,
+                remote_call_options,
+                remote_subscription_request,
+                1,
+            );
+
+        // Operation to test
+        let result = command_sender
+            .subscribe(remote_topic.clone(), test_lib::helpers::subscriber_info1())
+            .await;
+        assert!(result.is_ok());
+
+        // Verify operation result content
+        let subscription_status = result.unwrap();
+        assert_eq!(subscription_status.state.unwrap(), State::SUBSCRIBE_PENDING);
+
+        // Verify iternal bookeeping
+        let topic_subscribers = command_sender.get_topic_subscribers().await;
+        assert!(topic_subscribers.is_ok());
+        #[allow(clippy::mutable_key_type)]
+        let topic_subscribers = topic_subscribers.unwrap();
+        assert_eq!(topic_subscribers.len(), 1);
+
+        let remote_topics = command_sender.get_remote_topics().await;
+        assert!(remote_topics.is_ok());
+        #[allow(clippy::mutable_key_type)]
+        let remote_topics = remote_topics.unwrap();
+        assert_eq!(remote_topics.len(), 1);
+        assert_eq!(
+            *remote_topics.get(&remote_topic.clone()).unwrap(),
+            remote_state
+        );
+    }
+
+    // [utest->req~usubscribe-state-remote-sub~1]
+    // [utest->req~usubscribe-remote_subscribe-subscriber-change~1]
     #[tokio::test]
     async fn test_repeated_remote_subscribe() {
         helpers::init_once();
@@ -387,6 +493,7 @@ mod tests {
     }
 
     // All subscribers for a topic unsubscribe
+    // [utest->dsn~usubscribe-state-machine~1]
     #[tokio::test]
     async fn test_final_unsubscribe() {
         helpers::init_once();
@@ -428,6 +535,7 @@ mod tests {
     }
 
     // Only some subscribers of a topic unsubscribe
+    // [utest->dsn~usubscribe-state-machine~1]
     #[tokio::test]
     async fn test_partial_unsubscribe() {
         helpers::init_once();
@@ -481,6 +589,9 @@ mod tests {
     }
 
     // All subscribers for a remote topic unsubscribe
+    // [utest->dsn~usubscribe-state-machine~1]
+    // [utest->req~usubscribe-state-remote-unsub~1]
+    // [utest->req~usubscribe-remote_unsubscribe-subscriber-change~1]
     #[tokio::test]
     async fn test_final_remote_unsubscribe() {
         helpers::init_once();
@@ -568,6 +679,8 @@ mod tests {
     }
 
     // Some subscribers for a remote topic unsubscribe, but at least one subscriber is left
+    // [utest->dsn~usubscribe-state-machine~1]
+    // [utest->req~usubscribe-state-remote-unsub~1]
     #[tokio::test]
     async fn test_partial_remote_unsubscribe() {
         helpers::init_once();

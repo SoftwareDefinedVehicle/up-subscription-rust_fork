@@ -34,7 +34,16 @@ mod tests {
         USubscriptionConfiguration, USubscriptionService,
     };
 
+    // [utest->req~usubscribe-uri-not-empty~1]
+    // [utest->req~usubscribe-uri-authority~1]
+    // [utest->req~usubscribe-uri-entity-id~1]
+    // [utest->req~usubscribe-uri-resource-id~1]
+    // [utest->req~usubscribe-uri-version-major~1]
     #[test_case(UUri::default(), SubscriberInfo::default(); "Default topic, Default SubscriberInfo")]
+    #[test_case(UUri {authority_name: "*".to_string(), ..Default::default()}, SubscriberInfo::default(); "Authority-wildcard topic, Default SubscriberInfo")]
+    #[test_case(UUri {ue_id: 0x0000_FFFF, ..Default::default()}, SubscriberInfo::default(); "Entity_id-wildcard topic, Default SubscriberInfo")]
+    #[test_case(UUri {resource_id: 0x0000_FFFF, ..Default::default()}, SubscriberInfo::default(); "Resource_id-wildcard topic, Default SubscriberInfo")]
+    #[test_case(UUri {ue_version_major: 0x0000_00FF, ..Default::default()}, SubscriberInfo::default(); "major_version-wildcard topic, Default SubscriberInfo")]
     #[test_case(test_lib::helpers::local_topic1_uri(), SubscriberInfo::default(); "Good topic, Default SubscriberInfo")]
     #[test_case(UUri::default(), test_lib::helpers::subscriber_info1(); "Default topic, good SubscriberInfo")]
     #[tokio::test]
@@ -154,7 +163,16 @@ mod tests {
         assert_eq!(notification_status.state.unwrap(), state);
     }
 
+    // [utest->req~usubscribe-uri-not-empty~1]
+    // [utest->req~usubscribe-uri-authority~1]
+    // [utest->req~usubscribe-uri-entity-id~1]
+    // [utest->req~usubscribe-uri-resource-id~1]
+    // [utest->req~usubscribe-uri-version-major~1]
     #[test_case(UUri::default(), SubscriberInfo::default(); "Default topic, Default SubscriberInfo")]
+    #[test_case(UUri {authority_name: "*".to_string(), ..Default::default()}, SubscriberInfo::default(); "Authority-wildcard topic, Default SubscriberInfo")]
+    #[test_case(UUri {ue_id: 0x0000_FFFF, ..Default::default()}, SubscriberInfo::default(); "Entity_id-wildcard topic, Default SubscriberInfo")]
+    #[test_case(UUri {resource_id: 0x0000_FFFF, ..Default::default()}, SubscriberInfo::default(); "Resource_id-wildcard topic, Default SubscriberInfo")]
+    #[test_case(UUri {ue_version_major: 0x0000_00FF, ..Default::default()}, SubscriberInfo::default(); "major_version-wildcard topic, Default SubscriberInfo")]
     #[test_case(test_lib::helpers::local_topic1_uri(), SubscriberInfo::default(); "Good topic, Default SubscriberInfo")]
     #[test_case(UUri::default(), test_lib::helpers::subscriber_info1(); "Default topic, good SubscriberInfo")]
     #[tokio::test]
@@ -264,7 +282,16 @@ mod tests {
         assert_eq!(notification_status.state.unwrap(), State::UNSUBSCRIBED);
     }
 
+    // [utest->req~usubscribe-uri-not-empty~1]
+    // [utest->req~usubscribe-uri-authority~1]
+    // [utest->req~usubscribe-uri-entity-id~1]
+    // [utest->req~usubscribe-uri-resource-id~1]
+    // [utest->req~usubscribe-uri-version-major~1]
     #[test_case(UUri::default(), SubscriberInfo::default(); "Default topic, Default SubscriberInfo")]
+    #[test_case(UUri {authority_name: "*".to_string(), ..Default::default()}, SubscriberInfo::default(); "Authority-wildcard topic, Default SubscriberInfo")]
+    #[test_case(UUri {ue_id: 0x0000_FFFF, ..Default::default()}, SubscriberInfo::default(); "Entity_id-wildcard topic, Default SubscriberInfo")]
+    #[test_case(UUri {resource_id: 0x0000_FFFF, ..Default::default()}, SubscriberInfo::default(); "Resource_id-wildcard topic, Default SubscriberInfo")]
+    #[test_case(UUri {ue_version_major: 0x0000_00FF, ..Default::default()}, SubscriberInfo::default(); "major_version-wildcard topic, Default SubscriberInfo")]
     #[test_case(test_lib::helpers::notification_topic_uri(), SubscriberInfo::default(); "Good topic, Default SubscriberInfo")]
     #[test_case(test_lib::helpers::remote_topic1_uri(), SubscriberInfo::default(); "Remote topic, Default SubscriberInfo")]
     #[test_case(test_lib::helpers::remote_topic1_uri(), SubscriberInfo::default(); "Invalid topic, Default SubscriberInfo")]
@@ -315,14 +342,27 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    // [utest->req~usubscribe-uri-not-empty~1]
+    // [utest->req~usubscribe-uri-authority~1]
+    // [utest->req~usubscribe-uri-entity-id~1]
+    // [utest->req~usubscribe-uri-resource-id~1]
+    // [utest->req~usubscribe-uri-version-major~1]
+    #[test_case(UUri::default(); "Default topic")]
+    #[test_case(UUri {authority_name: "*".to_string(), ..Default::default()}; "Authority-wildcard topic")]
+    #[test_case(UUri {ue_id: 0x0000_FFFF, ..Default::default()}; "Entity_id-wildcard topic")]
+    #[test_case(UUri {resource_id: 0x0000_FFFF, ..Default::default()}; "Resource_id-wildcard topic")]
+    #[test_case(UUri {ue_version_major: 0x0000_00FF, ..Default::default()}; "major_version-wildcard topic")]
     #[tokio::test]
-    async fn test_unregister_for_notifications_input_validation() {
+    async fn test_unregister_for_notifications_input_validation(topic: UUri) {
         helpers::init_once();
 
         // Prepare things
         let usubscription = test_lib::mocks::usubscription_default_mock(0);
 
-        let notification_request = NotificationsRequest::default();
+        let notification_request = NotificationsRequest {
+            topic: Some(topic).into(),
+            ..Default::default()
+        };
 
         // Operation to test
         let result = usubscription
@@ -354,15 +394,25 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    // [utest->req~usubscribe-uri-not-empty~1]
+    // [utest->req~usubscribe-uri-authority~1]
+    // [utest->req~usubscribe-uri-entity-id~1]
+    // [utest->req~usubscribe-uri-resource-id~1]
+    // [utest->req~usubscribe-uri-version-major~1]
+    #[test_case(UUri::default(); "Default topic")]
+    #[test_case(UUri {authority_name: "*".to_string(), ..Default::default()}; "Authority-wildcard topic")]
+    #[test_case(UUri {ue_id: 0x0000_FFFF, ..Default::default()}; "Entity_id-wildcard topic")]
+    #[test_case(UUri {resource_id: 0x0000_FFFF, ..Default::default()}; "Resource_id-wildcard topic")]
+    #[test_case(UUri {ue_version_major: 0x0000_00FF, ..Default::default()}; "major_version-wildcard topic")]
     #[tokio::test]
-    async fn test_fetch_subscribers_input_validation() {
+    async fn test_fetch_subscribers_input_validation(topic: UUri) {
         helpers::init_once();
 
         // Prepare things
         let usubscription = test_lib::mocks::usubscription_default_mock(0);
 
         let fetch_subscribers_request = FetchSubscribersRequest {
-            topic: Some(UUri::default()).into(),
+            topic: Some(topic).into(),
             ..Default::default()
         };
 
@@ -435,7 +485,16 @@ mod tests {
         assert_eq!(result.subscribers.len(), expected_count);
     }
 
+    // [utest->req~usubscribe-uri-not-empty~1]
+    // [utest->req~usubscribe-uri-authority~1]
+    // [utest->req~usubscribe-uri-entity-id~1]
+    // [utest->req~usubscribe-uri-resource-id~1]
+    // [utest->req~usubscribe-uri-version-major~1]
     #[test_case(Request::Topic(UUri::default()); "Default Request:Topic UUri")]
+    #[test_case(Request::Topic(UUri {authority_name: "*".to_string(), ..Default::default()}); "Authority-wildcard Request:Topic UUri")]
+    #[test_case(Request::Topic(UUri {ue_id: 0x0000_FFFF, ..Default::default()}); "Entity_id-wildcard Request:Topic UUri")]
+    #[test_case(Request::Topic(UUri {resource_id: 0x0000_FFFF, ..Default::default()}); "Resource_id-wildcard Request:Topic UUri")]
+    #[test_case(Request::Topic(UUri {ue_version_major: 0x0000_00FF, ..Default::default()}); "major_version-wildcard Request:Topic UUri")]
     #[test_case(Request::Subscriber(SubscriberInfo::default()); "Default Request:Susbcriber SusbcriberInfo")]
     #[tokio::test]
     async fn test_fetch_subscriptions_input_validation(request: Request) {

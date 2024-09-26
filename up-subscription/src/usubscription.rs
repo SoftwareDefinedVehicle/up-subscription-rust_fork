@@ -339,12 +339,7 @@ impl USubscription for USubscriptionService {
         let Some(topic) = topic.into_option() else {
             return Err(UStatus::fail_with_code(UCode::INVALID_ARGUMENT, "No topic"));
         };
-        if topic.is_empty() {
-            return Err(UStatus::fail_with_code(
-                UCode::INVALID_ARGUMENT,
-                "Empty topic UUri",
-            ));
-        }
+        helpers::is_valid_topic(&topic)?;
 
         let Some(subscriber) = subscriber.into_option() else {
             return Err(UStatus::fail_with_code(
@@ -422,12 +417,7 @@ impl USubscription for USubscriptionService {
         let Some(topic) = topic.into_option() else {
             return Err(UStatus::fail_with_code(UCode::INVALID_ARGUMENT, "No topic"));
         };
-        if topic.is_empty() {
-            return Err(UStatus::fail_with_code(
-                UCode::INVALID_ARGUMENT,
-                "Empty topic UUri",
-            ));
-        }
+        helpers::is_valid_topic(&topic)?;
 
         let Some(subscriber) = subscriber.into_option() else {
             return Err(UStatus::fail_with_code(
@@ -504,12 +494,8 @@ impl USubscription for USubscriptionService {
         let Some(topic) = topic.into_option() else {
             return Err(UStatus::fail_with_code(UCode::INVALID_ARGUMENT, "No topic"));
         };
-        if topic.is_empty() {
-            return Err(UStatus::fail_with_code(
-                UCode::INVALID_ARGUMENT,
-                "Empty notification UUri",
-            ));
-        }
+        helpers::is_valid_topic(&topic)?;
+
         if !topic.is_event() {
             return Err(UStatus::fail_with_code(
                 UCode::INVALID_ARGUMENT,
@@ -637,12 +623,7 @@ impl USubscription for USubscriptionService {
         let Some(topic) = fetch_subscribers_request.topic.as_ref() else {
             return Err(UStatus::fail_with_code(UCode::INVALID_ARGUMENT, "No topic"));
         };
-        if topic.is_empty() {
-            return Err(UStatus::fail_with_code(
-                UCode::INVALID_ARGUMENT,
-                "Empty topic UUri",
-            ));
-        }
+        helpers::is_valid_topic(topic)?;
 
         debug!(
             "Got FetchSubscribersRequest for topic {}",
@@ -689,12 +670,7 @@ impl USubscription for USubscriptionService {
         };
         match request {
             Request::Topic(topic) => {
-                if topic.is_empty() {
-                    return Err(UStatus::fail_with_code(
-                        UCode::INVALID_ARGUMENT,
-                        "Empty request topic UUri",
-                    ));
-                }
+                helpers::is_valid_topic(topic)?;
             }
             Request::Subscriber(subscriber) => {
                 if subscriber.is_empty() {

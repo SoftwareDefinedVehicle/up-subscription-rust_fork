@@ -117,6 +117,7 @@ mod tests {
         }
     }
 
+    // [utest->dsn~usubscribe-register-notifications~1]
     #[tokio::test]
     async fn test_add_notifyee() {
         helpers::init_once();
@@ -144,6 +145,7 @@ mod tests {
         );
     }
 
+    // [utest->dsn~usubscribe-unregister-notifications~1]
     #[tokio::test]
     async fn test_remove_notifyee() {
         helpers::init_once();
@@ -178,6 +180,9 @@ mod tests {
     }
 
     // This test expects a state change notification to be send to the generic Notification Update channel
+    // [utest->dsn~usubscribe-change-notification~1]
+    // [utest->req~usubscribe-change-notification-type~1]
+    // [utest->req~usubscribe-change-notification-topic~1]
     #[tokio::test]
     async fn test_state_change() {
         helpers::init_once();
@@ -221,6 +226,10 @@ mod tests {
 
     // This test expects a state change notification to be send to the generic Notification Update channel,
     // as well as to the custom notification topics registered by susbcribers who like things complicated.
+    // [utest->dsn~usubscribe-change-notification~1]
+    // [utest->req~usubscribe-change-notification-type~1]
+    // [utest->req~usubscribe-change-notification-topic~1]
+    // [utest->dsn~usubscribe-register-notifications~1]
     #[tokio::test]
     async fn test_state_change_custom() {
         helpers::init_once();

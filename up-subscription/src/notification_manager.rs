@@ -81,6 +81,7 @@ pub(crate) async fn notification_engine(
             _ = shutdown.notified() => break,
         };
         match event {
+            // [impl->dsn~usubscribe-register-notifications~1]
             NotificationEvent::AddNotifyee { subscriber, topic } => {
                 if topic.is_event() {
                     notification_topics.insert(subscriber, topic);
@@ -88,6 +89,7 @@ pub(crate) async fn notification_engine(
                     error!("Topic UUri is not a valid event target");
                 }
             }
+            // [impl->dsn~usubscribe-unregister-notifications~1]
             NotificationEvent::RemoveNotifyee { subscriber } => {
                 notification_topics.remove(&subscriber);
             }
@@ -106,6 +108,9 @@ pub(crate) async fn notification_engine(
 
                 // Send Update message to general notification channel
                 // as per usubscription.proto RegisterForNotifications(NotificationsRequest)
+                // [impl->dsn~usubscribe-change-notification~1]
+                // [impl->req~usubscribe-change-notification-type~1]
+                // [impl->req~usubscribe-change-notification-topic~1]
                 match UMessageBuilder::publish(usubscription_uri(RESOURCE_ID_SUBSCRIPTION_CHANGE))
                     .with_message_id(UUID::build())
                     .build_with_protobuf_payload(&update)
@@ -123,6 +128,7 @@ pub(crate) async fn notification_engine(
                 }
 
                 // Send Update message to any dedicated registered notification-subscribers
+                // [impl->dsn~usubscribe-register-notifications~1]
                 for notification_topic in notification_topics.values() {
                     debug!(
                         "Sending notification to ({}): topic {}, subscriber {}, status {}",
@@ -140,6 +146,7 @@ pub(crate) async fn notification_engine(
                             .to_uri(usubscription::INCLUDE_SCHEMA),
                         update.status.as_ref().unwrap_or_default()
                     );
+                    // [impl->req~usubscribe-change-notification-type~1]
                     match UMessageBuilder::publish(notification_topic.clone())
                         .with_message_id(UUID::build())
                         .build_with_protobuf_payload(&update)

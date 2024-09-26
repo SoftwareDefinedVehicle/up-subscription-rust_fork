@@ -22,6 +22,7 @@ This codebase is heavily work in progress - among the next things to do and inve
 - Is it supposed to be possible to register remote uuris as notification topics?
 - Should remote UUris be excluded from all listeners except `subscribe` and `unsubscribe`?
 - Do we need update/change notifications when remote SubscriptionResponses come in?
+- Is SUBSCRIBE_PENDING a valid state to receive from a remote SubscriptionService as a response to a subscribe() call?
 
 ## Getting Started
 

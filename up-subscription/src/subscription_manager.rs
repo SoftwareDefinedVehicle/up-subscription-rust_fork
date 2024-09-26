@@ -153,10 +153,13 @@ pub(crate) async fn handle_message(
                         .or_default()
                         .insert(subscriber);
 
+                    // [impl->dsn~usubscribe-state-machine~1]
                     let mut state = TopicState::SUBSCRIBED; // everything in topic_subscribers is considered SUBSCRIBED by default
 
                     if topic.is_remote_authority(&own_uri) {
                         // for remote_topics, we explicitly track state due to the _PENDING scenarios
+                        // [impl->dsn~usubscribe-state-machine~1]
+                        // [impl->req~usubscribe-state-remote-sub-state~1]
                         state = *remote_topics
                             .get(&topic)
                             .unwrap_or(&TopicState::SUBSCRIBE_PENDING);
@@ -164,6 +167,7 @@ pub(crate) async fn handle_message(
                         remote_topics.entry(topic.clone()).or_insert(state);
                         if is_new {
                             // this is the first subscriber to this (remote) topic, so perform remote subscription
+                            // [impl->req~usubscribe-state-remote-sub~1]
                             let own_uri_clone = own_uri.clone();
                             let up_client_clone = up_client.clone();
                             let remote_sub_sender_clone = remote_sub_sender.clone();
@@ -205,11 +209,14 @@ pub(crate) async fn handle_message(
                             && entry.is_empty()
                         {
                             // until remote ubsubscribe confirmed (below), set remote topics tracker state to UNSUBSCRIBE_PENDING
+                            // [impl->req~usubscribe-state-remote-unsub-state~1]
                             if let Some(entry) = remote_topics.get_mut(&topic) {
+                                // [impl->dsn~usubscribe-state-machine~1]
                                 *entry = TopicState::UNSUBSCRIBE_PENDING;
                             }
 
                             // this was the last subscriber to this (remote) topic, so perform remote unsubscription
+                            // [impl->req~usubscribe-state-remote-unsub~1]
                             let own_uri_clone = own_uri.clone();
                             let up_client_clone = up_client.clone();
                             let remote_sub_sender_clone = remote_sub_sender.clone();
@@ -235,6 +242,7 @@ pub(crate) async fn handle_message(
                     if respond_to
                         .send(SubscriptionStatus {
                             // Whatever happens with the remote topic state - as far as the local client is concerned, it has now UNSUBSCRIBED from this topic
+                            // [impl->dsn~usubscribe-state-machine~1]
                             state: TopicState::UNSUBSCRIBED.into(),
                             ..Default::default()
                         })
@@ -441,6 +449,7 @@ async fn remote_subscribe(
     // build request
     let subscription_request = SubscriptionRequest {
         topic: Some(topic.clone()).into(),
+        // [impl->req~usubscribe-remote_subscribe-subscriber-change~1]
         subscriber: Some(SubscriberInfo {
             uri: Some(own_uri.clone()).into(),
             ..Default::default()
@@ -453,6 +462,7 @@ async fn remote_subscribe(
     let subscription_response: SubscriptionResponse = up_client
         .invoke_proto_method(
             make_remote_subscribe_uuri(&subscription_request.topic),
+            // [impl->req~usubscribe-remote-max-timeout~1]
             CallOptions::for_rpc_request(UP_REMOTE_TTL, None, None, Some(UPriority::UPRIORITY_CS4)),
             subscription_request,
         )
@@ -465,15 +475,31 @@ async fn remote_subscribe(
         })?;
 
     // deal with response
+    // [impl->dsn~usubscribe-state-machine~1]
     if subscription_response.is_state(TopicState::SUBSCRIBED) {
         debug!("Got remote subscription response, state SUBSCRIBED");
 
         let _ = remote_sub_sender.send(RemoteSubscriptionEvent::RemoteTopicStateUpdate {
             topic,
+            // [impl->req~usubscribe-state-remote-sub-response-positive~1]
             state: TopicState::SUBSCRIBED,
+        });
+    } else if subscription_response.is_state(TopicState::SUBSCRIBE_PENDING) {
+        debug!("Got remote subscription response, state SUBSCRIBE_PENDING");
+
+        let _ = remote_sub_sender.send(RemoteSubscriptionEvent::RemoteTopicStateUpdate {
+            topic,
+            // [impl->req~usubscribe-state-remote-sub-response-positive~1]
+            state: TopicState::SUBSCRIBE_PENDING,
         });
     } else {
         debug!("Got remote subscription response, some other state");
+
+        let _ = remote_sub_sender.send(RemoteSubscriptionEvent::RemoteTopicStateUpdate {
+            topic,
+            // [impl->req~usubscribe-state-remote-sub-response-negative~1]
+            state: TopicState::UNSUBSCRIBED,
+        });
     }
 
     Ok(())
@@ -489,6 +515,7 @@ async fn remote_unsubscribe(
     // build request
     let unsubscribe_request = UnsubscribeRequest {
         topic: Some(topic.clone()).into(),
+        // [impl->req~usubscribe-remote_unsubscribe-subscriber-change~1]
         subscriber: Some(SubscriberInfo {
             uri: Some(own_uri.clone()).into(),
             ..Default::default()
@@ -501,6 +528,7 @@ async fn remote_unsubscribe(
     let unsubscribe_response: UStatus = up_client
         .invoke_proto_method(
             make_remote_unsubscribe_uuri(&unsubscribe_request.topic),
+            // [impl->req~usubscribe-remote-max-timeout~1]
             CallOptions::for_rpc_request(UP_REMOTE_TTL, None, None, Some(UPriority::UPRIORITY_CS4)),
             unsubscribe_request,
         )
@@ -513,9 +541,12 @@ async fn remote_unsubscribe(
         })?;
 
     // deal with response
+    // [impl->dsn~usubscribe-state-machine~1]
     match unsubscribe_response.code.enum_value_or(UCode::UNKNOWN) {
         UCode::OK => {
             debug!("Got OK remote unsubscribe response");
+
+            // [impl->req~usubscribe-state-remote-unsub-response-positive~1]
             let _ = remote_sub_sender.send(RemoteSubscriptionEvent::RemoteTopicStateUpdate {
                 topic,
                 state: TopicState::UNSUBSCRIBED,
@@ -523,6 +554,13 @@ async fn remote_unsubscribe(
         }
         code => {
             debug!("Got {:?} remote unsubscribe response", code);
+
+            // [impl->req~usubscribe-state-remote-unsub-response-negative~1]
+            let _ = remote_sub_sender.send(RemoteSubscriptionEvent::RemoteTopicStateUpdate {
+                topic,
+                state: TopicState::SUBSCRIBED,
+            });
+
             return Err(UStatus::fail_with_code(
                 code,
                 "Error during remote unsubscribe",
