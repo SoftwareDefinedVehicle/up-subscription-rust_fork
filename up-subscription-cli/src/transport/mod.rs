@@ -11,7 +11,17 @@
  * SPDX-License-Identifier: Apache-2.0
  ********************************************************************************/
 
-pub(crate) mod test_lib;
+#[cfg(feature = "mqtt5")]
+pub(crate) mod mqtt5;
+#[cfg(feature = "mqtt5")]
+pub(crate) use mqtt5::get_mqtt5_transport;
 
-mod notification_manager_tests;
-mod subscription_manager_tests;
+#[cfg(feature = "socket")]
+pub(crate) mod socket;
+#[cfg(feature = "socket")]
+pub(crate) use socket::get_socket_transport;
+
+#[cfg(feature = "zenoh")]
+pub(crate) mod zenoh;
+#[cfg(feature = "zenoh")]
+pub(crate) use zenoh::get_zenoh_transport;

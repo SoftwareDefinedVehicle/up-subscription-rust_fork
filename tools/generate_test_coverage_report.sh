@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 ################################################################################
 # Copyright (c) 2025 Contributors to the Eclipse Foundation
@@ -13,4 +13,5 @@
 # SPDX-License-Identifier: Apache-2.0
 ################################################################################
 
-/up-subscription-cli
+# we want both html and lcov output formats
+cargo tarpaulin -o lcov -o html --output-dir target/tarpaulin

@@ -11,12 +11,21 @@
  * SPDX-License-Identifier: Apache-2.0
  ********************************************************************************/
 
-#[cfg(feature = "zenoh")]
-mod zenoh;
-#[cfg(feature = "zenoh")]
-pub(crate) use zenoh::get_zenoh_handlers;
+use std::sync::Arc;
 
-#[cfg(feature = "socket")]
-mod socket;
-#[cfg(feature = "socket")]
-pub(crate) use socket::get_socket_handlers;
+use up_rust::{LocalUriProvider, UStatus, UTransport};
+
+pub(crate) async fn get_socket_transport(
+    _uri_provider: Arc<dyn LocalUriProvider>,
+) -> Result<Arc<dyn UTransport>, UStatus> {
+    // let transport = Arc::new(UTransportSocket::new().expect("Error creating socket transport"));
+
+    // let client = Arc::new(
+    //     InMemoryRpcClient::new(transport.clone(), uri_provider.clone())
+    //         .await
+    //         .expect("Error creating socket client"),
+    // );
+    // Some(transport)
+
+    todo!()
+}

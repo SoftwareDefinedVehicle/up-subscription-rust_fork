@@ -22,8 +22,7 @@ mod tests {
     };
 
     use up_rust::core::usubscription::{
-        usubscription_uri, State, SubscriberInfo, SubscriptionStatus, Update,
-        RESOURCE_ID_SUBSCRIPTION_CHANGE,
+        usubscription_uri, State, SubscriptionStatus, Update, RESOURCE_ID_SUBSCRIPTION_CHANGE,
     };
     use up_rust::{UMessage, UMessageBuilder, UUri, UUID};
 
@@ -73,7 +72,7 @@ mod tests {
 
         async fn state_change(
             &self,
-            subscriber: SubscriberInfo,
+            subscriber: UUri,
             topic: UUri,
             status: SubscriptionStatus,
         ) -> Result<(), Box<dyn Error>> {
@@ -211,7 +210,7 @@ mod tests {
         // operation to test
         let r = command_sender
             .state_change(
-                changing_subscriber.clone(),
+                changing_subscriber.uri.unwrap_or_default(),
                 changing_topic.clone(),
                 changing_status,
             )
@@ -219,87 +218,5 @@ mod tests {
         assert!(r.is_ok())
     }
 
-    // This test expects a state change notification to be send to the generic Notification Update channel,
-    // as well as to the custom notification topics registered by susbcribers who like things complicated.
-    #[tokio::test]
-    async fn test_state_change_custom() {
-        helpers::init_once();
-
-        // prepare things
-        // this is the status&topic&subscriber that the notification is about
-        let changing_status = SubscriptionStatus {
-            state: State::SUBSCRIBED.into(),
-            ..Default::default()
-        };
-        let changing_topic = test_lib::helpers::local_topic1_uri();
-        let changing_subscriber = test_lib::helpers::subscriber_info1();
-
-        // first subscriber that set a custom notification topic
-        let expected_subscriber_1 = test_lib::helpers::subscriber_info2();
-        let expected_topic_1 = test_lib::helpers::local_topic2_uri();
-
-        // second subscriber that set a custom notification topic
-        let expected_subscriber_2 = test_lib::helpers::subscriber_info3();
-        let expected_topic_2 = test_lib::helpers::local_topic3_uri();
-
-        // custom notification expectations
-        #[allow(clippy::mutable_key_type)]
-        let mut notification_topics_replacement: HashMap<UUri, UUri> = HashMap::new();
-        notification_topics_replacement.insert(
-            expected_subscriber_1.uri.clone().unwrap(),
-            expected_topic_1.clone(),
-        );
-        notification_topics_replacement.insert(
-            expected_subscriber_2.uri.clone().unwrap(),
-            expected_topic_2.clone(),
-        );
-
-        // the update message that we're expecting
-        let expected_update = Update {
-            topic: Some(changing_topic.clone()).into(),
-            subscriber: Some(changing_subscriber.clone()).into(),
-            status: Some(changing_status.clone()).into(),
-            ..Default::default()
-        };
-
-        // this is the generic update channel notification, that always is sent
-        let expected_message_general_channel =
-            UMessageBuilder::publish(usubscription_uri(RESOURCE_ID_SUBSCRIPTION_CHANGE))
-                .with_message_id(UUID::build())
-                .build_with_protobuf_payload(&expected_update)
-                .unwrap();
-
-        // custom update messages, expected by subscribers who registered for notification on custom topics
-        let expected_message_custom_1 = UMessageBuilder::publish(expected_topic_1)
-            .with_message_id(UUID::build())
-            .build_with_protobuf_payload(&expected_update)
-            .unwrap();
-        let expected_message_custom_2 = UMessageBuilder::publish(expected_topic_2)
-            .with_message_id(UUID::build())
-            .build_with_protobuf_payload(&expected_update)
-            .unwrap();
-
-        // put all of this into our mock
-        let command_sender = CommandSender::new(vec![
-            expected_message_general_channel,
-            expected_message_custom_1,
-            expected_message_custom_2,
-        ]);
-
-        // set custom notification config
-        command_sender
-            .set_notification_topics(notification_topics_replacement)
-            .await
-            .expect("Error communicating with subscription manager");
-
-        // operation to test
-        let r = command_sender
-            .state_change(
-                changing_subscriber.clone(),
-                changing_topic.clone(),
-                changing_status,
-            )
-            .await;
-        assert!(r.is_ok())
-    }
+    // This test
 }

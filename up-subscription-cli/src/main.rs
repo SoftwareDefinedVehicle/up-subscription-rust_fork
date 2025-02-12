@@ -17,17 +17,22 @@ use log::*;
 use std::sync::Arc;
 use tokio::signal;
 
-use up_rust::{communication::RpcClient, UTransport};
+use up_rust::{LocalUriProvider, UTransport};
 use up_subscription::{ConfigurationError, USubscriptionConfiguration, USubscriptionService};
 
 #[cfg(unix)]
 use daemonize::Daemonize;
 
-mod modules;
+#[cfg(feature = "mqtt5")]
+use up_transport_mqtt5::MqttClientOptions;
+
+mod transport;
+#[cfg(feature = "mqtt5")]
+use transport::get_mqtt5_transport;
 #[cfg(feature = "socket")]
-use modules::get_socket_handlers;
+use transport::get_socket_transport;
 #[cfg(feature = "zenoh")]
-use modules::get_zenoh_handlers;
+use transport::get_zenoh_transport;
 
 fn between_1_and_1024(s: &str) -> Result<usize, String> {
     number_range(s, 1, 1024)
@@ -58,9 +63,11 @@ impl std::fmt::Display for StartupError {
 impl std::error::Error for StartupError {}
 
 #[derive(clap::ValueEnum, Clone, Default, Debug)]
-enum Transports {
+enum Transport {
     #[default]
     None,
+    #[cfg(feature = "mqtt5")]
+    Mqtt5,
     #[cfg(feature = "socket")]
     Socket,
     #[cfg(feature = "zenoh")]
@@ -68,7 +75,7 @@ enum Transports {
 }
 
 // All our args
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 #[command(version, about = "Rust implementation of Eclipse uProtocol USubscription service.", long_about = None)]
 pub(crate) struct Args {
     /// Authority name for usubscription service
@@ -82,7 +89,7 @@ pub(crate) struct Args {
 
     /// The transport implementation to use
     #[arg(short, long, env)]
-    transport: Transports,
+    transport: Transport,
 
     /// Buffer size of subscription command channel - minimum 1, maximum 1024, defaults to 1024
     #[arg(short, long, env, value_parser=between_1_and_1024)]
@@ -95,6 +102,10 @@ pub(crate) struct Args {
     /// Increase verbosity of output
     #[arg(short, long, env, default_value_t = false)]
     verbose: bool,
+
+    #[cfg(feature = "mqtt5")]
+    #[command(flatten)]
+    mqtt_client_options: MqttClientOptions,
 }
 
 #[tokio::main]
@@ -112,46 +123,51 @@ async fn main() {
     }
     up_subscription::init_once();
 
-    let config = match config_from_args(&args) {
+    let _config = match config_from_args(&args) {
         Err(e) => {
             panic!("Configuration error: {e}")
         }
-        Ok(config) => config,
+        Ok(config) => Arc::new(config),
     };
 
     // Deal with transport module that we're to use
-    #[allow(unused_variables)]
-    let transport: Option<Arc<dyn UTransport>> = None;
-    #[allow(unused_variables)]
-    let client: Option<Arc<dyn RpcClient>> = None;
-
-    let (transport, client) = match args.transport {
-        Transports::None => (None::<Arc<dyn UTransport>>, None::<Arc<dyn RpcClient>>),
+    let transport: Option<Arc<dyn UTransport>> = match args.transport {
+        #[cfg(feature = "mqtt5")]
+        Transport::Mqtt5 => Some(
+            get_mqtt5_transport(_config.clone(), args.mqtt_client_options)
+                .await
+                .inspect_err(|e| panic!("Error setting up MQTT5 transport: {}", e.get_message()))
+                .unwrap(),
+        ),
         #[cfg(feature = "socket")]
-        Transports::Socket => get_socket_handlers(config.clone()).await,
+        Transport::Socket => Some(
+            get_socket_transport(_config.clone())
+                .await
+                .inspect_err(|e| panic!("Error setting up socket transport: {}", e.get_message()))
+                .unwrap(),
+        ),
         #[cfg(feature = "zenoh")]
-        Transports::Zenoh => get_zenoh_handlers(config.clone()).await,
+        Transport::Zenoh => Some(
+            get_zenoh_transport(_config.clone())
+                .await
+                .inspect_err(|e| panic!("Error setting up Zenoh transport: {}", e.get_message()))
+                .unwrap(),
+        ),
+        _ => None,
     };
 
-    if transport.is_none() || client.is_none() {
-        panic!("No valid transport or client implementation available");
+    if transport.is_none() {
+        panic!("No valid transport protocol");
     }
 
     // Set up and run USubscription service
-    let (urun, mut ustop) = USubscriptionService::run(
-        config,
-        transport.as_ref().unwrap().clone(),
-        client.unwrap().clone(),
-    )
-    .expect("Error starting usubscription service");
-
-    USubscriptionService::now_listen(urun.clone())
+    let mut ustop = USubscriptionService::run(_config.clone(), transport.as_ref().unwrap().clone())
         .await
-        .expect("Error setting up transport listeners");
+        .expect("Error starting usubscription service");
 
     info!(
         "Usubscription service running and listeners up on {}",
-        urun.get_source_uri().to_uri(true)
+        _config.get_source_uri()
     );
 
     // Daemonize or wait for shutdown signal
@@ -171,9 +187,11 @@ async fn main() {
     ustop.stop().await;
 }
 
-fn config_from_args(args: &Args) -> Result<Arc<USubscriptionConfiguration>, ConfigurationError> {
+fn config_from_args(args: &Args) -> Result<USubscriptionConfiguration, ConfigurationError> {
     let authority: &str = args.authority.trim();
-    assert!(!authority.is_empty());
+    if authority.is_empty() {
+        return Err(ConfigurationError::new("Authority name empty or missing"));
+    }
 
     USubscriptionConfiguration::create(
         authority.to_string(),

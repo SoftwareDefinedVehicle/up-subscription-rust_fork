@@ -13,22 +13,18 @@
 
 use std::sync::Arc;
 
-use up_rust::{
-    communication::{InMemoryRpcClient, RpcClient},
-    LocalUriProvider, UTransport,
-};
+use up_rust::{LocalUriProvider, UStatus, UTransport};
+use up_transport_mqtt5::{Mqtt5Transport, MqttClientOptions, TransportMode};
 
-use up_transport_socket_rust::UTransportSocket;
-
-pub(crate) async fn get_socket_handlers(
+pub(crate) async fn get_mqtt5_transport(
     uri_provider: Arc<dyn LocalUriProvider>,
-) -> (Option<Arc<dyn UTransport>>, Option<Arc<dyn RpcClient>>) {
-    let transport = Arc::new(UTransportSocket::new().expect("Error creating socket transport"));
-
-    let client = Arc::new(
-        InMemoryRpcClient::new(transport.clone(), uri_provider.clone())
-            .await
-            .expect("Error creating socket client"),
-    );
-    (Some(transport), Some(client))
+    client_options: MqttClientOptions,
+) -> Result<Arc<dyn UTransport>, UStatus> {
+    Ok(Mqtt5Transport::new(
+        TransportMode::InVehicle,
+        client_options,
+        uri_provider.get_authority(),
+    )
+    .await
+    .map(Arc::new)?)
 }
