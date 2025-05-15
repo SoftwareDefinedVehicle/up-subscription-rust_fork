@@ -71,6 +71,7 @@ impl RequestHandler for SubscriptionRequestHandler {
         let se = SubscriptionEvent::AddSubscription {
             subscriber: source.clone(),
             topic: topic.clone(),
+            expiry: None,
             respond_to,
         };
 
@@ -172,6 +173,7 @@ mod tests {
             SubscriptionEvent::AddSubscription {
                 subscriber,
                 topic,
+                expiry: None,
                 respond_to,
             } => {
                 assert_eq!(subscriber, test_lib::helpers::subscriber_uri1());
