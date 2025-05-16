@@ -19,13 +19,14 @@ use std::{convert::TryInto, path::PathBuf};
 
 use up_rust::{core::usubscription::State as TopicState, UUri};
 
-use crate::USubscriptionConfiguration;
+use crate::{usubscription, USubscriptionConfiguration};
 
 // Whether to include 'up:' in serialized UUris
 const PERSIST_UP_SCHEMA: bool = true;
 
 #[allow(dead_code)] // I have no idea why clippy insists on this here - this type is most definitely being used...
-pub(crate) type SubscriptionSet = HashMap<UUri, HashMap<UUri, Option<u32>>>;
+pub(crate) type SubscriptionSet =
+    HashMap<UUri, HashMap<UUri, Option<usubscription::ExpiryTimestamp>>>;
 
 #[derive(Debug)]
 pub(crate) enum PersistencyError {
@@ -96,7 +97,7 @@ impl SubscriptionsStore {
         &mut self,
         subscriber: &UUri,
         topic: &UUri,
-        expiry: Option<u32>,
+        expiry: Option<usubscription::ExpiryTimestamp>,
     ) -> Result<bool, PersistencyError> {
         // serialize inputs to types used in persistency
         let topic_string = &topic.to_uri(PERSIST_UP_SCHEMA);
@@ -105,7 +106,7 @@ impl SubscriptionsStore {
         Ok(
             if let Some(mut subscriber_list) = self
                 .persistency
-                .get::<HashMap<String, Option<u32>>>(topic_string)
+                .get::<HashMap<String, Option<usubscription::ExpiryTimestamp>>>(topic_string)
             {
                 subscriber_list.insert(subscriber_string.clone(), expiry);
                 self.persistency
@@ -232,7 +233,9 @@ impl SubscriptionsStore {
             #[allow(clippy::mutable_key_type)]
             let mut topic_subscribers = HashMap::new();
 
-            if let Some(list) = entry.get_value::<HashMap<String, Option<u32>>>() {
+            if let Some(list) =
+                entry.get_value::<HashMap<String, Option<usubscription::ExpiryTimestamp>>>()
+            {
                 for (subscriber, expiry) in list {
                     topic_subscribers.insert(
                         UUri::try_from(subscriber).map_err(|e| {
@@ -270,7 +273,7 @@ impl SubscriptionsStore {
                     &subscribers
                         .iter()
                         .map(|(u, e)| (u.to_uri(PERSIST_UP_SCHEMA), *e))
-                        .collect::<HashMap<String, Option<u32>>>(),
+                        .collect::<HashMap<String, Option<usubscription::ExpiryTimestamp>>>(),
                 )
                 .map_err(|e| {
                     PersistencyError::serialization_error(format!(

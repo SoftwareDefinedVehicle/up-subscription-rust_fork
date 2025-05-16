@@ -31,7 +31,7 @@ mod tests {
         handle_message, RequestKind, SubscribersResponse, SubscriptionEntry, SubscriptionEvent,
         SubscriptionsResponse,
     };
-    use crate::{helpers, persistency, test_lib, USubscriptionConfiguration};
+    use crate::{helpers, persistency, test_lib, usubscription, USubscriptionConfiguration};
 
     // Simple subscription-manager-actor front-end to use for testing
     struct CommandSender {
@@ -114,7 +114,7 @@ mod tests {
             &self,
             topic: UUri,
             subscriber: UUri,
-            expiry: Option<u32>,
+            expiry: Option<usubscription::ExpiryTimestamp>,
         ) -> Result<SubscriptionStatus, Box<dyn Error>> {
             let (respond_to, receive_from) = oneshot::channel::<SubscriptionStatus>();
             let command = SubscriptionEvent::AddSubscription {
@@ -268,7 +268,9 @@ mod tests {
     #[test_case(vec![(UUri::default(), UUri::default(), None)]; "Default susbcriber-topic-no_expiry")]
     #[test_case(vec![(UUri::default(), UUri::default(), Some(1000))]; "Default susbcriber-topic-some_expiry")]
     #[tokio::test]
-    async fn test_subscribe_with_expiry(topic_subscribers: Vec<(UUri, UUri, Option<u32>)>) {
+    async fn test_subscribe_with_expiry(
+        topic_subscribers: Vec<(UUri, UUri, Option<usubscription::ExpiryTimestamp>)>,
+    ) {
         helpers::init_once();
         let command_sender = CommandSender::new();
 

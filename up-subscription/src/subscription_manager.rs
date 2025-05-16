@@ -28,7 +28,7 @@ use up_rust::{
     UCode, UPriority, UStatus, UUri,
 };
 
-use crate::{helpers, persistency, usubscription::UP_REMOTE_TTL, USubscriptionConfiguration};
+use crate::{helpers, persistency, usubscription, USubscriptionConfiguration};
 
 // This is the core business logic for handling and tracking subscriptions. It is currently implemented as a single event-consuming
 // function `handle_message()`, which is supposed to be spawned into a task and process the various `Events` that it can receive
@@ -62,7 +62,7 @@ pub(crate) enum SubscriptionEvent {
     AddSubscription {
         subscriber: UUri,
         topic: UUri,
-        expiry: Option<u32>,
+        expiry: Option<usubscription::ExpiryTimestamp>,
         respond_to: oneshot::Sender<SubscriptionStatus>,
     },
     RemoveSubscription {
@@ -310,7 +310,7 @@ fn add_subscription(
     remote_topics: &mut persistency::RemoteTopicsStore,
     subscriber: UUri,
     topic: UUri,
-    expiry: Option<u32>,
+    expiry: Option<usubscription::ExpiryTimestamp>,
 ) -> Result<SubscriptionStatus, persistency::PersistencyError> {
     let _ = topic_subscribers.add_subscription(&subscriber, &topic, expiry)?;
 
@@ -472,7 +472,12 @@ async fn remote_subscribe(
     let subscription_response: SubscriptionResponse = rpc_client
         .invoke_proto_method(
             make_remote_subscribe_uuri(&subscription_request.topic),
-            CallOptions::for_rpc_request(UP_REMOTE_TTL, None, None, Some(UPriority::UPRIORITY_CS4)),
+            CallOptions::for_rpc_request(
+                usubscription::UP_REMOTE_TTL,
+                None,
+                None,
+                Some(UPriority::UPRIORITY_CS4),
+            ),
             subscription_request,
         )
         .await
@@ -521,7 +526,12 @@ async fn remote_unsubscribe(
     let unsubscribe_response: UStatus = rpc_client
         .invoke_proto_method(
             make_remote_unsubscribe_uuri(&unsubscribe_request.topic),
-            CallOptions::for_rpc_request(UP_REMOTE_TTL, None, None, Some(UPriority::UPRIORITY_CS4)),
+            CallOptions::for_rpc_request(
+                usubscription::UP_REMOTE_TTL,
+                None,
+                None,
+                Some(UPriority::UPRIORITY_CS4),
+            ),
             unsubscribe_request,
         )
         .await
