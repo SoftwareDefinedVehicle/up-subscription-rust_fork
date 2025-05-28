@@ -14,11 +14,11 @@
 use log::*;
 #[cfg(test)]
 use std::collections::HashMap;
-use std::sync::Arc;
-#[cfg(test)]
-use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::{mpsc, mpsc::Receiver, mpsc::Sender, oneshot, Notify};
-use up_rust::{LocalUriProvider, UTransport};
+use std::{sync::Arc, time::Duration};
+use tokio::{
+    sync::{mpsc, mpsc::Receiver, mpsc::Sender, oneshot, Notify},
+    time::sleep,
+};
 
 use up_rust::{
     communication::{CallOptions, InMemoryRpcClient, RpcClient},
@@ -27,12 +27,15 @@ use up_rust::{
         UnsubscribeRequest, RESOURCE_ID_SUBSCRIBE, RESOURCE_ID_UNSUBSCRIBE, USUBSCRIPTION_TYPE_ID,
         USUBSCRIPTION_VERSION_MAJOR,
     },
-    UCode, UPriority, UStatus, UUri,
+    LocalUriProvider, UCode, UPriority, UStatus, UTransport, UUri,
 };
 
 use crate::{
-    helpers, notification_manager, notification_manager::NotificationEvent, persistency,
-    usubscription, USubscriptionConfiguration,
+    helpers, notification_manager,
+    notification_manager::NotificationEvent,
+    persistency,
+    usubscription::{ExpiryTimestamp, SubscriberUUri, TopicUUri, UP_REMOTE_TTL},
+    USubscriptionConfiguration,
 };
 
 // This is the core business logic for handling and tracking subscriptions. It is currently implemented as a single event-consuming
@@ -40,43 +43,50 @@ use crate::{
 // via tokio mpsc channel. This design allows to forgo the use of any synhronization primitives on the subscription-tracking container
 // data types, as any access is coordinated/serialized via the Event selection loop.
 
-// Maximum number of `Subscriber` entries to be returned in a `FetchSusbcriptions´ operation
+// Maximum number of `Subscriber` entries to be returned in a `FetchSusbcriptions´ operation.
 const UP_MAX_FETCH_SUBSCRIBERS_LEN: usize = 100;
-// Maximum number of `Subscriber` entries to be returned in a `FetchSusbcriptions´ operation
+// Maximum number of `Subscriber` entries to be returned in a `FetchSusbcriptions´ operation.
 const UP_MAX_FETCH_SUBSCRIPTIONS_LEN: usize = 100;
+
+// Queue size of message channel for internal commands - like subscription status change messages or subscription expiration commands.
+const INTERNAL_COMMAND_BUFFER_SIZE: usize = 128;
+
+// Timeout to use when sending subscription removal command after a subscription has expired; if exceeded, subscription won't be removed
+// directly but will be cleaned up at next startup.
+const SUBSCRIPTION_EXPIRY_REMOVAL_TIMEOUT_SECONDS: u64 = 5;
 
 #[derive(Debug)]
 pub(crate) enum RequestKind {
-    Subscriber(UUri),
-    Topic(UUri),
+    Subscriber(SubscriberUUri),
+    Topic(TopicUUri),
 }
 
 #[derive(Debug)]
 pub(crate) struct SubscriptionEntry {
-    pub(crate) topic: UUri,
-    pub(crate) subscriber: UUri,
+    pub(crate) topic: TopicUUri,
+    pub(crate) subscriber: SubscriberUUri,
     pub(crate) status: SubscriptionStatus,
 }
 
-pub(crate) type SubscribersResponse = (Vec<UUri>, bool); // List of subscribers, boolean flag stating if there exist more entries than contained in list
+pub(crate) type SubscribersResponse = (Vec<SubscriberUUri>, bool); // List of subscribers, boolean flag stating if there exist more entries than contained in list
 pub(crate) type SubscriptionsResponse = (Vec<SubscriptionEntry>, bool); // List of subscriber entries, boolean flag stating if there exist more entries than contained in list
 
 // This is the 'outside API' of subscription manager, it includes some events that are only to be used in (and only enabled for) testing.
 #[derive(Debug)]
 pub(crate) enum SubscriptionEvent {
     AddSubscription {
-        subscriber: UUri,
-        topic: UUri,
-        expiry: Option<usubscription::ExpiryTimestamp>,
+        subscriber: SubscriberUUri,
+        topic: TopicUUri,
+        expiry: Option<ExpiryTimestamp>,
         respond_to: oneshot::Sender<SubscriptionStatus>,
     },
     RemoveSubscription {
-        subscriber: UUri,
-        topic: UUri,
+        subscriber: SubscriberUUri,
+        topic: TopicUUri,
         respond_to: oneshot::Sender<SubscriptionStatus>,
     },
     FetchSubscribers {
-        topic: UUri,
+        topic: TopicUUri,
         offset: Option<u32>,
         respond_to: oneshot::Sender<SubscribersResponse>, // return list of subscribers and flag indicating whether there are more
     },
@@ -99,31 +109,38 @@ pub(crate) enum SubscriptionEvent {
     // Purely for use during testing: get copy of current topic-subscriper ledger
     #[cfg(test)]
     GetRemoteTopics {
-        respond_to: oneshot::Sender<HashMap<UUri, TopicState>>,
+        respond_to: oneshot::Sender<HashMap<TopicUUri, TopicState>>,
     },
     // Purely for use during testing: force-set new topic-subscriber ledger
     #[cfg(test)]
     SetRemoteTopics {
-        topic_subscribers_replacement: HashMap<UUri, TopicState>,
+        topic_subscribers_replacement: HashMap<TopicUUri, TopicState>,
         respond_to: oneshot::Sender<()>,
     },
     // Purely for use during testing: get internal remote-subscription-change command sender
     #[cfg(test)]
     GetRemoteSubscriptionChangeSender {
-        respond_to: oneshot::Sender<UnboundedSender<RemoteSubscriptionEvent>>,
+        respond_to: oneshot::Sender<Sender<InternalSubscriptionEvent>>,
     },
 }
 
 // Internal subscription manager API - used to update on remote subscriptions (deal with _PENDING states)
 #[derive(Debug)]
-pub(crate) enum RemoteSubscriptionEvent {
-    RemoteTopicStateUpdate { topic: UUri, state: TopicState },
+pub(crate) enum InternalSubscriptionEvent {
+    TopicStateUpdate {
+        topic: TopicUUri,
+        state: TopicState,
+    },
+    RemoveExpiredSubscription {
+        subscriber: SubscriberUUri,
+        topic: TopicUUri,
+    },
 }
 
 // Wrapper type, include all kinds of actions subscription manager knows
 enum Event {
     LocalSubscription(SubscriptionEvent),
-    RemoteSubscription(RemoteSubscriptionEvent),
+    RemoteSubscription(InternalSubscriptionEvent),
 }
 
 // Core business logic of subscription management - includes container data types for tracking subscriptions and remote subscriptions.
@@ -144,8 +161,25 @@ pub(crate) async fn handle_message(
     // for remote topics, we need to additionally deal with _PENDING states, this tracks states of these topics
     let mut remote_topics = persistency::RemoteTopicsStore::new(&configuration);
 
-    let (remote_sub_sender, mut remote_sub_receiver) =
-        mpsc::unbounded_channel::<RemoteSubscriptionEvent>();
+    let (internal_cmd_sender, mut internal_cmd_receiver) =
+        mpsc::channel::<InternalSubscriptionEvent>(INTERNAL_COMMAND_BUFFER_SIZE);
+
+    // At startup, set up timed unsubscribe for any persisted subscriptions that define an expiration timestamp
+    match subscriptions.get_and_prune_expiring_subscriptions() {
+        Ok(list) => {
+            for (subscriber, topic, expiry_millis) in list {
+                schedule_unsubscribe(
+                    expiry_millis,
+                    subscriber.clone(),
+                    topic.clone(),
+                    internal_cmd_sender.clone(),
+                );
+            }
+        }
+        Err(e) => {
+            panic!("Persistency failure {e}")
+        }
+    };
 
     loop {
         let event: Event = tokio::select! {
@@ -158,7 +192,7 @@ pub(crate) async fn handle_message(
                 Some(event) => Event::LocalSubscription(event),
             },
             // "Inside" events - updates around remote subscription states
-            event = remote_sub_receiver.recv() => match event {
+            event = internal_cmd_receiver.recv() => match event {
                 None => {
                     error!("Problem with subscription command channel, received None-event");
                     break
@@ -179,7 +213,7 @@ pub(crate) async fn handle_message(
                     match add_subscription(
                         configuration.clone(),
                         transport.clone(),
-                        remote_sub_sender.clone(),
+                        internal_cmd_sender.clone(),
                         &mut subscriptions,
                         &mut remote_topics,
                         subscriber.clone(),
@@ -190,8 +224,8 @@ pub(crate) async fn handle_message(
                             // Send topic state change notification
                             notification_manager::notify(
                                 notification_sender.clone(),
-                                Some(subscriber),
-                                topic,
+                                Some(subscriber.clone()),
+                                topic.clone(),
                                 result.clone(),
                             )
                             .await;
@@ -213,7 +247,7 @@ pub(crate) async fn handle_message(
                     match remove_subscription(
                         configuration.clone(),
                         transport.clone(),
-                        remote_sub_sender.clone(),
+                        internal_cmd_sender.clone(),
                         &mut subscriptions,
                         &mut remote_topics,
                         subscriber.clone(),
@@ -314,14 +348,16 @@ pub(crate) async fn handle_message(
                 },
                 #[cfg(test)]
                 SubscriptionEvent::GetRemoteSubscriptionChangeSender { respond_to } => {
-                    let _ = respond_to.send(remote_sub_sender.clone());
+                    let _ = respond_to.send(internal_cmd_sender.clone());
                 }
             },
             // deal with feedback/state updates from the remote subscription handlers
             Event::RemoteSubscription(event) => match event {
-                RemoteSubscriptionEvent::RemoteTopicStateUpdate { topic, state } => {
+                InternalSubscriptionEvent::TopicStateUpdate { topic, state } => {
                     match remote_topics.set_topic_state(&topic, state) {
                         Ok(_) => {
+                            // Set up timed unsubscription here, in case state changes to ::PENDING
+
                             // Send topic state change notification - in the case of remote subscriptions,
                             // the subscriber is usubscription service itself, so leave that field empty.
                             notification_manager::notify(
@@ -340,6 +376,32 @@ pub(crate) async fn handle_message(
                         }
                     }
                 }
+                // Remote expired subscriptions, via internal command channel
+                InternalSubscriptionEvent::RemoveExpiredSubscription { subscriber, topic } => {
+                    match remove_subscription(
+                        configuration.clone(),
+                        transport.clone(),
+                        internal_cmd_sender.clone(),
+                        &mut subscriptions,
+                        &mut remote_topics,
+                        subscriber.clone(),
+                        topic.clone(),
+                    ) {
+                        Ok(result) => {
+                            // Send topic state change notification
+                            notification_manager::notify(
+                                notification_sender.clone(),
+                                Some(subscriber),
+                                topic,
+                                result.clone(),
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            panic!("Persistency failure {e}")
+                        }
+                    }
+                }
             },
         }
     }
@@ -350,31 +412,50 @@ pub(crate) async fn handle_message(
 fn add_subscription(
     uri_provider: Arc<dyn LocalUriProvider>,
     transport: Arc<dyn UTransport>,
-    remote_sub_sender: mpsc::UnboundedSender<RemoteSubscriptionEvent>,
+    internal_cmd_sender: Sender<InternalSubscriptionEvent>,
     topic_subscribers: &mut persistency::SubscriptionsStore,
     remote_topics: &mut persistency::RemoteTopicsStore,
-    subscriber: UUri,
-    topic: UUri,
-    expiry: Option<usubscription::ExpiryTimestamp>,
+    subscriber: SubscriberUUri,
+    topic: TopicUUri,
+    expiry: Option<ExpiryTimestamp>,
 ) -> Result<SubscriptionStatus, persistency::PersistencyError> {
     let _ = topic_subscribers.add_subscription(&subscriber, &topic, expiry)?;
 
-    // for remote_topics, we explicitly track state due to _PENDING scenarios
+    // For REMOTE topics, we explicitly track state due to _PENDING scenarios
     let state = if topic.is_remote_authority(&uri_provider.get_authority()) {
         let state = remote_topics.add_topic_or_get_state(&topic)?;
 
         // if this remote topic is not yet SUBSCRIBED, perform remote subscription
         if state != TopicState::SUBSCRIBED {
+            let topic_clone = topic.clone();
+            let internal_cmd_sender_clone = internal_cmd_sender.clone();
             helpers::spawn_and_log_error(async move {
-                remote_subscribe(topic, uri_provider, transport, remote_sub_sender).await?;
+                remote_subscribe(
+                    topic_clone,
+                    uri_provider,
+                    transport,
+                    internal_cmd_sender_clone,
+                )
+                .await?;
                 Ok(())
             });
         }
         state
     } else {
-        // Local topics are considered to have status SUBSCRIBED as soon as they are registered here
+        // Otherwise, LOCAL topics are considered to have status SUBSCRIBED as soon as they are registered here
         TopicState::SUBSCRIBED
     };
+
+    // Set up timed unsubscribe in case expiration timestamp is set
+    if let Some(expiry_millis) = expiry {
+        schedule_unsubscribe(
+            expiry_millis,
+            subscriber.clone(),
+            topic,
+            internal_cmd_sender,
+        );
+    };
+
     Ok(SubscriptionStatus {
         state: state.into(),
         ..Default::default()
@@ -385,11 +466,11 @@ fn add_subscription(
 fn remove_subscription(
     uri_provider: Arc<dyn LocalUriProvider>,
     transport: Arc<dyn UTransport>,
-    remote_sub_sender: mpsc::UnboundedSender<RemoteSubscriptionEvent>,
+    internal_cmd_sender: Sender<InternalSubscriptionEvent>,
     topic_subscribers: &mut persistency::SubscriptionsStore,
     remote_topics: &mut persistency::RemoteTopicsStore,
-    subscriber: UUri,
-    topic: UUri,
+    subscriber: SubscriberUUri,
+    topic: TopicUUri,
 ) -> Result<SubscriptionStatus, persistency::PersistencyError> {
     // if this was the last subscriber to topic and topic is remote
     if topic_subscribers.remove_subscription(&subscriber, &topic)?
@@ -400,7 +481,7 @@ fn remove_subscription(
 
         // perform remote unsubscription
         helpers::spawn_and_log_error(async move {
-            remote_unsubscribe(topic, uri_provider, transport, remote_sub_sender).await?;
+            remote_unsubscribe(topic, uri_provider, transport, internal_cmd_sender).await?;
             Ok(())
         });
     }
@@ -415,7 +496,7 @@ fn remove_subscription(
 // Fetch all subscribers of a topic
 fn fetch_subscribers(
     topic_subscribers: &persistency::SubscriptionsStore,
-    topic: UUri,
+    topic: TopicUUri,
     offset: Option<u32>,
 ) -> Result<SubscribersResponse, persistency::PersistencyError> {
     // This will get *every* client that subscribed to `topic` - no matter whether (in the case of remote subscriptions)
@@ -496,10 +577,10 @@ fn fetch_subscriptions(
 
 // Perform remote topic subscription
 async fn remote_subscribe(
-    topic: UUri,
+    topic: TopicUUri,
     uri_provider: Arc<dyn LocalUriProvider>,
     transport: Arc<dyn UTransport>,
-    remote_sub_sender: mpsc::UnboundedSender<RemoteSubscriptionEvent>,
+    internal_cmd_sender: Sender<InternalSubscriptionEvent>,
 ) -> Result<(), UStatus> {
     let rpc_client: Arc<dyn RpcClient> = Arc::new(
         InMemoryRpcClient::new(transport, uri_provider)
@@ -517,12 +598,7 @@ async fn remote_subscribe(
     let subscription_response: SubscriptionResponse = rpc_client
         .invoke_proto_method(
             make_remote_subscribe_uuri(&subscription_request.topic),
-            CallOptions::for_rpc_request(
-                usubscription::UP_REMOTE_TTL,
-                None,
-                None,
-                Some(UPriority::UPRIORITY_CS4),
-            ),
+            CallOptions::for_rpc_request(UP_REMOTE_TTL, None, None, Some(UPriority::UPRIORITY_CS4)),
             subscription_request,
         )
         .await
@@ -537,10 +613,12 @@ async fn remote_subscribe(
     if subscription_response.is_state(TopicState::SUBSCRIBED) {
         debug!("Got remote subscription response, state SUBSCRIBED");
 
-        let _ = remote_sub_sender.send(RemoteSubscriptionEvent::RemoteTopicStateUpdate {
-            topic,
-            state: TopicState::SUBSCRIBED,
-        });
+        let _ = internal_cmd_sender
+            .send(InternalSubscriptionEvent::TopicStateUpdate {
+                topic,
+                state: TopicState::SUBSCRIBED,
+            })
+            .await;
     } else {
         debug!("Got remote subscription response, some other state");
     }
@@ -550,10 +628,10 @@ async fn remote_subscribe(
 
 // Perform remote topic unsubscription
 async fn remote_unsubscribe(
-    topic: UUri,
+    topic: TopicUUri,
     uri_provider: Arc<dyn LocalUriProvider>,
     transport: Arc<dyn UTransport>,
-    remote_sub_sender: mpsc::UnboundedSender<RemoteSubscriptionEvent>,
+    internal_cmd_sender: Sender<InternalSubscriptionEvent>,
 ) -> Result<(), UStatus> {
     let rpc_client: Arc<dyn RpcClient> = Arc::new(
         InMemoryRpcClient::new(transport, uri_provider)
@@ -571,12 +649,7 @@ async fn remote_unsubscribe(
     let unsubscribe_response: UStatus = rpc_client
         .invoke_proto_method(
             make_remote_unsubscribe_uuri(&unsubscribe_request.topic),
-            CallOptions::for_rpc_request(
-                usubscription::UP_REMOTE_TTL,
-                None,
-                None,
-                Some(UPriority::UPRIORITY_CS4),
-            ),
+            CallOptions::for_rpc_request(UP_REMOTE_TTL, None, None, Some(UPriority::UPRIORITY_CS4)),
             unsubscribe_request,
         )
         .await
@@ -591,10 +664,12 @@ async fn remote_unsubscribe(
     match unsubscribe_response.code.enum_value_or(UCode::UNKNOWN) {
         UCode::OK => {
             debug!("Got OK remote unsubscribe response");
-            let _ = remote_sub_sender.send(RemoteSubscriptionEvent::RemoteTopicStateUpdate {
-                topic,
-                state: TopicState::UNSUBSCRIBED,
-            });
+            let _ = internal_cmd_sender
+                .send(InternalSubscriptionEvent::TopicStateUpdate {
+                    topic,
+                    state: TopicState::UNSUBSCRIBED,
+                })
+                .await;
         }
         code => {
             debug!("Got {:?} remote unsubscribe response", code);
@@ -606,6 +681,32 @@ async fn remote_unsubscribe(
     };
 
     Ok(())
+}
+
+// Internal helper that will spawn a task to unsubscribe a subscriber-topic relationship at timestamp `expiry`.
+// In case the expiry timestamp is already in the past, unsubscribe will be initiated immediately.
+// This is hopefully good enough for now - in case we get very many expiring subscriptions, might have
+// to look for an approach that scales better.
+fn schedule_unsubscribe(
+    expiry: ExpiryTimestamp,
+    subscriber: SubscriberUUri,
+    topic: TopicUUri,
+    sender: Sender<InternalSubscriptionEvent>,
+) {
+    helpers::spawn_and_log_error(async move {
+        if let Some(delay) = helpers::duration_until_timestamp(expiry) {
+            sleep(delay).await;
+        }
+
+        sender
+            .send_timeout(
+                InternalSubscriptionEvent::RemoveExpiredSubscription { subscriber, topic },
+                Duration::from_secs(SUBSCRIPTION_EXPIRY_REMOVAL_TIMEOUT_SECONDS),
+            )
+            .await?;
+
+        Ok(())
+    });
 }
 
 // Create a remote Subscribe UUri from a (topic) uri; copies the UUri authority and
@@ -637,6 +738,9 @@ mod tests {
     // These are tests just for the locally used helper functions of subscription manager. More complex and complete
     // tests of the susbcription manager business logic are located in tests/subscription_manager_tests.rs
 
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::time::{Duration, Instant};
+
     use super::*;
     use crate::test_lib::{self};
     use up_rust::MockLocalUriProvider;
@@ -645,6 +749,76 @@ mod tests {
         let mut mock_provider = MockLocalUriProvider::new();
         mock_provider.expect_get_source_uri().return_const(uri);
         mock_provider
+    }
+
+    #[tokio::test]
+    async fn test_schedule_future_unsubscribe() {
+        let (internal_cmd_sender, mut internal_cmd_receiver) =
+            mpsc::channel::<InternalSubscriptionEvent>(INTERNAL_COMMAND_BUFFER_SIZE);
+
+        let start = Instant::now();
+        let expiry_in_1s = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            + 1000;
+
+        schedule_unsubscribe(
+            expiry_in_1s,
+            test_lib::helpers::subscriber_uri1(),
+            test_lib::helpers::local_topic1_uri(),
+            internal_cmd_sender,
+        );
+
+        let message = internal_cmd_receiver.recv().await;
+        if let Some(InternalSubscriptionEvent::RemoveExpiredSubscription { subscriber, topic }) =
+            message
+        {
+            // Dunno how flaky this might turn out to be - but let's test if there is at least a second elapsed between scheduling the
+            // unsubscribe task and it's reaction to the expiration timer 1s in the future...
+            let elapsed = start.elapsed();
+            assert!(elapsed >= Duration::from_millis(1000));
+
+            assert_eq!(topic, test_lib::helpers::local_topic1_uri());
+            assert_eq!(subscriber, test_lib::helpers::subscriber_uri1());
+        } else {
+            panic!("Expected RemoveExpiredSubscription event from scheduled task");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_schedule_past_unsubscribe() {
+        let (internal_cmd_sender, mut internal_cmd_receiver) =
+            mpsc::channel::<InternalSubscriptionEvent>(INTERNAL_COMMAND_BUFFER_SIZE);
+
+        let start = Instant::now();
+        let expiry_in_1s = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            - 1000;
+
+        schedule_unsubscribe(
+            expiry_in_1s,
+            test_lib::helpers::subscriber_uri1(),
+            test_lib::helpers::local_topic1_uri(),
+            internal_cmd_sender,
+        );
+
+        let message = internal_cmd_receiver.recv().await;
+        if let Some(InternalSubscriptionEvent::RemoveExpiredSubscription { subscriber, topic }) =
+            message
+        {
+            // Dunno how flaky this might turn out to be - but let's test if there is at most half a second elapsed between scheduling the
+            // unsubscribe task and it's reaction to the expiration timer 1s in the past...
+            let elapsed = start.elapsed();
+            assert!(elapsed < Duration::from_millis(500));
+
+            assert_eq!(topic, test_lib::helpers::local_topic1_uri());
+            assert_eq!(subscriber, test_lib::helpers::subscriber_uri1());
+        } else {
+            panic!("Expected RemoveExpiredSubscription event from scheduled task");
+        }
     }
 
     #[tokio::test]
@@ -677,7 +851,8 @@ mod tests {
             test_lib::mocks::utransport_mock_for_rpc(vec![(expected_request, expected_response)])
                 .await,
         );
-        let (sender, mut receiver) = mpsc::unbounded_channel::<RemoteSubscriptionEvent>();
+        let (sender, mut receiver) =
+            mpsc::channel::<InternalSubscriptionEvent>(INTERNAL_COMMAND_BUFFER_SIZE);
 
         // perform operation to test
         let result = remote_subscribe(
@@ -692,12 +867,10 @@ mod tests {
         assert!(result.is_ok());
         let response = receiver.recv().await;
         assert!(response.is_some());
-        match response.unwrap() {
-            RemoteSubscriptionEvent::RemoteTopicStateUpdate { topic, state } => {
-                assert_eq!(topic, expected_topic);
-                assert_eq!(state, TopicState::SUBSCRIBED);
-            }
-        }
+        if let InternalSubscriptionEvent::TopicStateUpdate { topic, state } = response.unwrap() {
+            assert_eq!(topic, expected_topic);
+            assert_eq!(state, TopicState::SUBSCRIBED);
+        };
     }
 
     #[tokio::test]
@@ -718,7 +891,8 @@ mod tests {
         };
 
         // set up mocks
-        let (sender, mut receiver) = mpsc::unbounded_channel::<RemoteSubscriptionEvent>();
+        let (sender, mut receiver) =
+            mpsc::channel::<InternalSubscriptionEvent>(INTERNAL_COMMAND_BUFFER_SIZE);
         let mock_transport = Arc::new(
             test_lib::mocks::utransport_mock_for_rpc(vec![(expected_request, expected_response)])
                 .await,
@@ -737,12 +911,10 @@ mod tests {
         assert!(result.is_ok());
         let response = receiver.recv().await;
         assert!(response.is_some());
-        match response.unwrap() {
-            RemoteSubscriptionEvent::RemoteTopicStateUpdate { topic, state } => {
-                assert_eq!(topic, expected_topic);
-                assert_eq!(state, TopicState::UNSUBSCRIBED);
-            }
-        }
+        if let InternalSubscriptionEvent::TopicStateUpdate { topic, state } = response.unwrap() {
+            assert_eq!(topic, expected_topic);
+            assert_eq!(state, TopicState::UNSUBSCRIBED);
+        };
     }
 
     #[test]
