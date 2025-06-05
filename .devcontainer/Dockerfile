@@ -1,5 +1,5 @@
 ################################################################################
-# Copyright (c) 2024 Contributors to the Eclipse Foundation
+# Copyright (c) 2025 Contributors to the Eclipse Foundation
 #
 # See the NOTICE file(s) distributed with this work for additional
 # information regarding copyright ownership.
@@ -12,19 +12,29 @@
 ################################################################################
 
 FROM mcr.microsoft.com/devcontainers/rust:latest
-
 ARG USERNAME=vscode
 ARG TARGETARCH
 
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     && apt-get -y install \
-    # Others
     curl \
-    zip \
     gcc \
     git \
+    openjdk-17-jre \
+    zip \
     && \
     rm -rf /var/lib/apt/lists/*
+
+# Download openfasttrace JARs and create shortcut oft executable
+ARG OFT_CORE_VERSION=4.1.0
+ARG OFT_ASCIIDOC_PLUGIN_VERSION=0.3.0
+ENV LIB_DIR=/opt/oft/lib
+RUN mkdir -p $LIB_DIR \
+    && base_url=https://github.com/itsallcode \
+    && wget -P $LIB_DIR ${base_url}/openfasttrace/releases/download/$OFT_CORE_VERSION/openfasttrace-$OFT_CORE_VERSION.jar \
+    && wget -P $LIB_DIR ${base_url}/openfasttrace-asciidoc-plugin/releases/download/$OFT_ASCIIDOC_PLUGIN_VERSION/openfasttrace-asciidoc-plugin-$OFT_ASCIIDOC_PLUGIN_VERSION-with-dependencies.jar \
+    && echo '#!/bin/bash\n\njava -cp "${LIB_DIR}/*" org.itsallcode.openfasttrace.core.cli.CliStarter "$@"' > /usr/local/bin/oft \
+    && chmod +x /usr/local/bin/oft
 
 # Before installing cargo tools, change to the user that will be used in the container later.
 # The reason is that cargo creates some cache, etc. folders with the correct group rustlang, but 
@@ -33,7 +43,7 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 USER ${USERNAME}
 
 # Install cargo cli tools
-RUN cargo install cargo-nextest cargo-deny cargo-tarpaulin cargo-dist --locked
+RUN cargo install cargo-nextest cargo-deny cargo-tarpaulin --locked
 
 # Install cargo tools for cross compilation
 RUN rustup target add aarch64-unknown-linux-gnu \
