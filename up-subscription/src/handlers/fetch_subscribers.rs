@@ -61,9 +61,10 @@ impl RequestHandler for FetchSubscribersRequestHandler {
             ));
         };
 
-        // topic input validation
         // [impl->dsn~usubscription-fetch-subscribers-invalid-topic~1]
-        helpers::validate_uri(&topic)?;
+        helpers::validate_uri(&topic).map_err(|e| {
+            ServiceInvocationError::InvalidArgument(format!("Invalid topic uri '{topic}': {e}"))
+        })?;
 
         // Interact with subscription manager backend
         let (respond_to, receive_from) = oneshot::channel::<Vec<SubscriberUUri>>();

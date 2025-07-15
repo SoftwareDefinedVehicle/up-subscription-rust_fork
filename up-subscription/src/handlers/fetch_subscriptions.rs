@@ -62,13 +62,21 @@ impl RequestHandler for FetchSubscriptionsRequestHandler {
         let request_kind = match request {
             Some(Request::Topic(topic)) => {
                 // [impl->dsn~usubscription-fetch-subscriptions-invalid-topic~1]
-                helpers::validate_uri(&topic)?;
+                helpers::validate_uri(&topic).map_err(|e| {
+                    ServiceInvocationError::InvalidArgument(format!(
+                        "Invalid topic uri '{topic}': {e}"
+                    ))
+                })?;
                 RequestKind::Topic(topic)
             }
             Some(Request::Subscriber(subscriber)) => {
                 if let Some(subscriber) = subscriber.uri.into_option() {
                     // [impl->dsn~usubscription-fetch-subscriptions-invalid-subscriber~1]
-                    helpers::validate_uri(&subscriber)?;
+                    helpers::validate_uri(&subscriber).map_err(|e| {
+                        ServiceInvocationError::InvalidArgument(format!(
+                            "Invalid subscriber uri '{subscriber}': {e}"
+                        ))
+                    })?;
                     RequestKind::Subscriber(subscriber)
                 } else {
                     return Err(ServiceInvocationError::InvalidArgument(
