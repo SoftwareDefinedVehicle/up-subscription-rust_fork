@@ -58,6 +58,10 @@ impl RequestHandler for RegisterNotificationsRequestHandler {
                 "No topic defined in request".to_string(),
             ));
         };
+        // [impl->dsn~usubscription-register-notifications-invalid-topic~1]
+        helpers::validate_uri(topic).map_err(|e| {
+            ServiceInvocationError::InvalidArgument(format!("Invalid topic uri '{topic}': {e}"))
+        })?;
 
         // Interact with notification manager backend
         let se = NotificationEvent::AddNotifyee {
@@ -84,7 +88,10 @@ impl RequestHandler for RegisterNotificationsRequestHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_case::test_case;
     use tokio::sync::mpsc::{self};
+
+    use up_rust::UUri;
 
     use crate::{helpers, tests::test_lib};
 
@@ -162,11 +169,7 @@ mod tests {
             )
             .await;
 
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            ServiceInvocationError::InvalidArgument(_) => {}
-            _ => panic!("Wrong error type"),
-        }
+        assert!(result.is_err_and(|err| matches!(err, ServiceInvocationError::InvalidArgument(_))));
     }
 
     #[tokio::test]
@@ -192,11 +195,7 @@ mod tests {
             )
             .await;
 
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            ServiceInvocationError::InvalidArgument(_) => {}
-            _ => panic!("Wrong error type"),
-        }
+        assert!(result.is_err_and(|err| matches!(err, ServiceInvocationError::InvalidArgument(_))));
     }
 
     #[tokio::test]
@@ -221,11 +220,7 @@ mod tests {
             )
             .await;
 
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            ServiceInvocationError::InvalidArgument(_) => {}
-            _ => panic!("Wrong error type"),
-        }
+        assert!(result.is_err_and(|err| matches!(err, ServiceInvocationError::InvalidArgument(_))));
     }
 
     #[tokio::test]
@@ -253,10 +248,59 @@ mod tests {
             )
             .await;
 
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            ServiceInvocationError::InvalidArgument(_) => {}
-            _ => panic!("Wrong error type"),
-        }
+        assert!(result.is_err_and(|err| matches!(err, ServiceInvocationError::InvalidArgument(_))));
+    }
+
+    // [utest->dsn~usubscription-register-notifications-invalid-topic~1]
+    #[test_case(UUri::default(); "Bad topic UUri")]
+    #[test_case(UUri {
+            authority_name: String::from("*"),
+            ue_id: test_lib::helpers::TOPIC_LOCAL1_ID,
+            ue_version_major: test_lib::helpers::TOPIC_LOCAL1_VERSION as u32,
+            resource_id: test_lib::helpers::TOPIC_LOCAL1_RESOURCE as u32,
+            ..Default::default()
+        }; "Wildcard authority in topic UUri")]
+    #[test_case(UUri {
+            authority_name: test_lib::helpers::LOCAL_AUTHORITY.into(),
+            ue_id: 0xFFFF_0000,
+            ue_version_major: test_lib::helpers::TOPIC_LOCAL1_VERSION as u32,
+            resource_id: test_lib::helpers::TOPIC_LOCAL1_RESOURCE as u32,
+            ..Default::default()
+        }; "Wildcard entity id in topic UUri")]
+    #[test_case(UUri {
+            authority_name: test_lib::helpers::LOCAL_AUTHORITY.into(),
+            ue_id: test_lib::helpers::TOPIC_LOCAL1_ID,
+            ue_version_major: test_lib::helpers::TOPIC_LOCAL1_VERSION as u32,
+            resource_id: 0x0000_FFFF,
+            ..Default::default()
+        }; "Wildcard resource id in topic UUri")]
+    #[tokio::test]
+    async fn test_invalid_topic_uri(topic: UUri) {
+        helpers::init_once();
+
+        // create request and other required object(s)
+        let notification_request = NotificationsRequest {
+            topic: Some(topic).into(),
+            ..Default::default()
+        };
+        let request_payload = UPayload::try_from_protobuf(notification_request.clone()).unwrap();
+        let message_attributes = UAttributes {
+            source: Some(test_lib::helpers::subscriber_uri1()).into(),
+            ..Default::default()
+        };
+        let (notification_sender, _) = mpsc::channel::<NotificationEvent>(1);
+
+        // create and spawn off handler, to make all the asnync goodness work
+        let request_handler = RegisterNotificationsRequestHandler::new(notification_sender);
+
+        let result = request_handler
+            .handle_request(
+                RESOURCE_ID_REGISTER_FOR_NOTIFICATIONS,
+                &message_attributes,
+                Some(request_payload),
+            )
+            .await;
+
+        assert!(result.is_err_and(|err| matches!(err, ServiceInvocationError::InvalidArgument(_))));
     }
 }
