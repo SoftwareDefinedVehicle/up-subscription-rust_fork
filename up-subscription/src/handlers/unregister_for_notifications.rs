@@ -70,6 +70,7 @@ impl RequestHandler for UnregisterNotificationsRequestHandler {
         // Interact with notification manager backend
         let se = NotificationEvent::RemoveNotifyee {
             subscriber: source.clone(),
+            topic: topic.clone(),
         };
 
         if let Err(e) = self.notification_sender.send(se).await {
@@ -139,8 +140,9 @@ mod tests {
         // validate subscription manager interaction
         let notification_event = notification_receiver.recv().await.unwrap();
         match notification_event {
-            NotificationEvent::RemoveNotifyee { subscriber } => {
+            NotificationEvent::RemoveNotifyee { subscriber, topic } => {
                 assert_eq!(subscriber, test_lib::helpers::subscriber_uri1());
+                assert_eq!(topic, test_lib::helpers::local_topic1_uri());
             }
             _ => panic!("Wrong event type"),
         }

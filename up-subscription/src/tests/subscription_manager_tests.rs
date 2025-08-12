@@ -19,6 +19,7 @@ mod tests {
     use std::error::Error;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use std::vec;
     use test_case::test_case;
     use tokio::sync::{mpsc, mpsc::Sender, oneshot, Notify};
 
@@ -141,7 +142,7 @@ mod tests {
             let shutdown_notification_cloned = shutdown_notification.clone();
             helpers::spawn_and_log_error(async move {
                 #[allow(clippy::mutable_key_type)]
-                let mut notification_topics: HashMap<SubscriberUUri, TopicUUri> = HashMap::new();
+                let mut notification_topics: Vec<(SubscriberUUri, TopicUUri)> = Vec::new();
                 loop {
                     tokio::select! {
                         Some(event) = notification_receiver.recv() => {
@@ -374,7 +375,7 @@ mod tests {
         #[allow(clippy::mutable_key_type)]
         async fn set_notification_topics(
             &self,
-            notification_topics_replacement: HashMap<SubscriberUUri, TopicUUri>,
+            notification_topics_replacement: Vec<(SubscriberUUri, TopicUUri)>,
         ) -> Result<(), Box<dyn Error>> {
             let (respond_to, receive_from) = oneshot::channel::<()>();
             let command = NotificationEvent::SetNotificationTopics {
@@ -1285,12 +1286,10 @@ mod tests {
 
         // Add a notification-registration to the mock backend, for which we subsequently expect a notifcation on reset
         #[allow(clippy::mutable_key_type)]
-        let mut notification_topics_replacement: HashMap<SubscriberUUri, TopicUUri> =
-            HashMap::new();
-        notification_topics_replacement.insert(
+        let notification_topics_replacement: Vec<(SubscriberUUri, TopicUUri)> = vec![(
             test_lib::helpers::subscriber_uri2(),
             test_lib::helpers::local_topic2_uri(),
-        );
+        )];
         assert!(command_sender
             .set_notification_topics(notification_topics_replacement)
             .await

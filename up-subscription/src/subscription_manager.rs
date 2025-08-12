@@ -222,7 +222,7 @@ pub(crate) async fn handle_message(
                         // [impl->dsn~usubscription-change-notification-update~1]
                         Ok(result) => {
                             // Send topic state change notification
-                            notification_manager::notify(
+                            notification_manager::notify_state_change(
                                 notification_sender.clone(),
                                 Some(subscriber.clone()),
                                 topic.clone(),
@@ -257,7 +257,7 @@ pub(crate) async fn handle_message(
                         Ok(result) => {
                             // Send topic state change notification
                             // [impl->dsn~usubscription-change-notification-update~1]
-                            notification_manager::notify(
+                            notification_manager::notify_state_change(
                                 notification_sender.clone(),
                                 Some(subscriber),
                                 topic,
@@ -375,7 +375,7 @@ pub(crate) async fn handle_message(
                                 // Want to do this out off the main control flow
                                 helpers::spawn_and_log_error(async move {
                                     for subscriber in subscribers {
-                                        notification_manager::notify(
+                                        notification_manager::notify_state_change(
                                             notification_sender_clone.clone(),
                                             Some(subscriber),
                                             topic_clone.clone(),
@@ -425,7 +425,7 @@ pub(crate) async fn handle_message(
                         Ok(result) => {
                             // Send topic state change notification
                             // [impl->dsn~usubscription-change-notification-update~1]
-                            notification_manager::notify(
+                            notification_manager::notify_state_change(
                                 notification_sender.clone(),
                                 Some(subscriber),
                                 topic,
@@ -622,7 +622,7 @@ async fn reset(
         helpers::spawn_and_log_error(async move {
             // Notify all topic subscribers
             for (subscriber, topic, _) in flattened_subscriptions {
-                notification_manager::notify(
+                notification_manager::notify_state_change(
                     notification_sender.clone(),
                     Some(subscriber),
                     topic,
@@ -636,7 +636,7 @@ async fn reset(
 
             // Notify all registered-for-notification clients
             for (subscriber, topic) in registered_notifactions {
-                notification_manager::notify(
+                notification_manager::notify_state_change(
                     notification_sender.clone(),
                     Some(subscriber),
                     topic,

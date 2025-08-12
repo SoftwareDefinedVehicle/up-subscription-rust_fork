@@ -162,15 +162,15 @@ pub(crate) mod helpers {
 
     pub(crate) const SUBSCRIBER1_ID: u32 = 0x0000_1000;
     pub(crate) const SUBSCRIBER1_VERSION: u8 = 0x01;
-    pub(crate) const SUBSCRIBER1_RESOURCE: u16 = 0x1000;
+    pub(crate) const SUBSCRIBER1_RESOURCE: u16 = 0x0000;
 
     const SUBSCRIBER2_ID: u32 = 0x0000_2000;
     const SUBSCRIBER2_VERSION: u8 = 0x01;
-    const SUBSCRIBER2_RESOURCE: u16 = 0x1000;
+    const SUBSCRIBER2_RESOURCE: u16 = 0x0010;
 
     const SUBSCRIBER3_ID: u32 = 0x0000_3000;
     const SUBSCRIBER3_VERSION: u8 = 0x01;
-    const SUBSCRIBER3_RESOURCE: u16 = 0x1000;
+    const SUBSCRIBER3_RESOURCE: u16 = 0x0100;
 
     #[allow(dead_code)] // final decision on removing this to happen after functional spec alignment is complete
     const NOTIFICATION_TOPIC_ID: u32 = 0x001_0000;
