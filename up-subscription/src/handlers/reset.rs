@@ -89,6 +89,8 @@ mod tests {
     use super::*;
     use tokio::sync::mpsc::{self};
 
+    use up_rust::UUri;
+
     use crate::{helpers, tests::test_lib};
 
     // [utest->dsn~usubscription-reset-protobuf~1]
@@ -254,9 +256,12 @@ mod tests {
         helpers::init_once();
 
         // create request and other required object(s)
+        let bad_source =
+            UUri::try_from("up://LOCAL/1000/1/F").expect("Error during test case setup");
+
         let request_payload = UPayload::try_from_protobuf(ResetRequest::default()).unwrap();
         let message_attributes = UAttributes {
-            source: Some(test_lib::helpers::subscriber_uri1()).into(),
+            source: Some(bad_source).into(),
             ..Default::default()
         };
 

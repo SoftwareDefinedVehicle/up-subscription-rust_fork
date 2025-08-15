@@ -12,7 +12,6 @@
  ********************************************************************************/
 
 use log::*;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc::Receiver, mpsc::Sender, oneshot, Notify};
 
@@ -21,7 +20,7 @@ use up_rust::{
         usubscription_uri, SubscriberInfo, SubscriptionStatus, Update,
         RESOURCE_ID_SUBSCRIPTION_CHANGE,
     },
-    UMessageBuilder, UTransport, UUID,
+    LocalUriProvider, UMessageBuilder, UTransport, UUID,
 };
 
 use crate::{
@@ -30,6 +29,9 @@ use crate::{
     usubscription::{SubscriberUUri, TopicUUri, INCLUDE_SCHEMA},
     USubscriptionConfiguration,
 };
+
+// From usubscription.proto, the uprotocol.notification_topic resource ID
+pub(crate) const SOURCE_URI_RESOURCE_ID: u16 = 0x8000;
 
 // This is the core business logic for tracking and sending subscription update notifications. It is currently implemented as a single
 // event-consuming function `notification_engine()`, which is supposed to be spawned into a task, and process the various notification
@@ -44,6 +46,7 @@ pub(crate) enum NotificationEvent {
     },
     RemoveNotifyee {
         subscriber: SubscriberUUri,
+        topic: TopicUUri,
     },
     StateChange {
         subscriber: Option<SubscriberUUri>,
@@ -55,12 +58,12 @@ pub(crate) enum NotificationEvent {
         respond_to: oneshot::Sender<Result<(), PersistencyError>>,
     },
     GetNotificationTopics {
-        respond_to: oneshot::Sender<HashMap<SubscriberUUri, TopicUUri>>,
+        respond_to: oneshot::Sender<Vec<(SubscriberUUri, TopicUUri)>>,
     },
     // Purely for use during testing: force-set new notifyees ledger
     #[cfg(test)]
     SetNotificationTopics {
-        notification_topics_replacement: HashMap<SubscriberUUri, TopicUUri>,
+        notification_topics_replacement: Vec<(SubscriberUUri, TopicUUri)>,
         respond_to: oneshot::Sender<()>,
     },
 }
@@ -93,9 +96,15 @@ impl PartialEq for NotificationEvent {
                 },
             ) => s1 == s2 && t1 == t2,
             (
-                NotificationEvent::RemoveNotifyee { subscriber: s1 },
-                NotificationEvent::RemoveNotifyee { subscriber: s2 },
-            ) => s1 == s2,
+                NotificationEvent::RemoveNotifyee {
+                    subscriber: s1,
+                    topic: t1,
+                },
+                NotificationEvent::RemoveNotifyee {
+                    subscriber: s2,
+                    topic: t2,
+                },
+            ) => s1 == s2 && t1 == t2,
             // Don't care about the test-only variants
             _ => false,
         }
@@ -129,6 +138,7 @@ pub(crate) async fn notification_engine(
             },
         };
         match event {
+            // [impl->req~usubscription-register-notifications~1]
             NotificationEvent::AddNotifyee { subscriber, topic } => {
                 if !topic.is_event() {
                     error!("Topic UUri is not a valid event target");
@@ -142,8 +152,9 @@ pub(crate) async fn notification_engine(
                     }
                 };
             }
-            NotificationEvent::RemoveNotifyee { subscriber } => {
-                match notifications.remove_notifyee(&subscriber) {
+            // [impl->req~usubscription-unregister-notifications~1]
+            NotificationEvent::RemoveNotifyee { subscriber, topic } => {
+                match notifications.remove_notifyee(&subscriber, &topic) {
                     Ok(_) => {}
                     Err(e) => {
                         error!("Persistency failure {e}")
@@ -158,7 +169,7 @@ pub(crate) async fn notification_engine(
             } => {
                 // [impl->dsn~usubscription-change-notification-type~1]
                 let update = Update {
-                    topic: Some(topic).into(),
+                    topic: Some(topic.clone()).into(),
                     subscriber: Some(SubscriberInfo {
                         uri: subscriber.into(),
                         ..Default::default()
@@ -188,29 +199,27 @@ pub(crate) async fn notification_engine(
                     }
                 }
 
-                // Send Update message to any dedicated registered notification-subscribers
+                // Send Update notification message to any dedicated registered notification-subscribers
                 // [impl->req~usubscription-register-notifications~1]
-                if let Ok(topics) = notifications.get_topics() {
-                    for topic_entry in topics {
+                if let Ok(subscribers) = notifications.get_subscribers_registered_for_topic(&topic)
+                {
+                    for subscribers_entry in subscribers {
                         debug!(
-                            "Sending notification to ({}): topic {}, subscriber {}, status {}",
-                            topic_entry.to_uri(INCLUDE_SCHEMA),
+                            "Sending notification to ({}), about topic {} changing state to {}",
+                            subscribers_entry.to_uri(INCLUDE_SCHEMA),
                             update
                                 .topic
-                                .as_ref()
-                                .unwrap_or_default()
-                                .to_uri(INCLUDE_SCHEMA),
-                            update
-                                .subscriber
-                                .uri
                                 .as_ref()
                                 .unwrap_or_default()
                                 .to_uri(INCLUDE_SCHEMA),
                             update.status.as_ref().unwrap_or_default()
                         );
 
-                        match UMessageBuilder::publish(topic_entry.clone())
-                            .build_with_protobuf_payload(&update)
+                        match UMessageBuilder::notification(
+                            configuration.get_resource_uri(SOURCE_URI_RESOURCE_ID),
+                            subscribers_entry.clone(),
+                        )
+                        .build_with_protobuf_payload(&update)
                         {
                             Ok(update_msg) => {
                                 let _r = up_transport.send(update_msg).await.inspect_err(|e|
@@ -254,7 +263,7 @@ pub(crate) async fn notification_engine(
 
 // Convenience wrapper for sending state change notification messages
 // `susbcriber` is an Option, because in the case ob remote subscription state changes, there is no subscriber (other than local usubscription service)
-pub(crate) async fn notify(
+pub(crate) async fn notify_state_change(
     notification_sender: Sender<NotificationEvent>,
     subscriber: Option<SubscriberUUri>,
     topic: TopicUUri,
@@ -282,9 +291,9 @@ pub(crate) async fn notify(
 // Might return an empty list if data retrieval fails for some reason, but will perform the reset in any case.
 pub(crate) async fn reset(
     notification_sender: Sender<NotificationEvent>,
-) -> Result<HashMap<SubscriberUUri, TopicUUri>, Box<dyn std::error::Error>> {
+) -> Result<Vec<(SubscriberUUri, TopicUUri)>, Box<dyn std::error::Error>> {
     // Get current notification registrations
-    let (respond_to, receive_from) = oneshot::channel::<HashMap<SubscriberUUri, TopicUUri>>();
+    let (respond_to, receive_from) = oneshot::channel::<Vec<(SubscriberUUri, TopicUUri)>>();
     notification_sender
         .send(NotificationEvent::GetNotificationTopics { respond_to })
         .await?;

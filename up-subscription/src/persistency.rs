@@ -12,7 +12,7 @@
  ********************************************************************************/
 
 use pickledb::{PickleDb, PickleDbDumpPolicy, SerializationMethod};
-use protobuf::{Enum, Message};
+use protobuf::Enum;
 use serde::de::Error;
 use std::collections::HashMap;
 use std::{convert::TryInto, path::PathBuf};
@@ -556,15 +556,23 @@ impl NotificationStore {
         topic: &TopicUUri,
     ) -> Result<(), PersistencyError> {
         let subscriber_string = subscriber.to_uri(Self::PERSIST_UP_SCHEMA);
-        let topic_bytes = serialize_uuri(topic)
-            .map_err(|e| PersistencyError::serialization_error(e.to_string()))?;
+        let topic_string = topic.to_uri(Self::PERSIST_UP_SCHEMA);
 
-        self.persistency
-            .set(&subscriber_string, &topic_bytes)
-            .map_err(|e| {
+        if !self.persistency.lexists(&topic_string) {
+            self.persistency.lcreate(&topic_string).map_err(|e| {
                 PersistencyError::internal_error(format!(
                     "Error setting notification configuration in persistency {e}"
                 ))
+            })?;
+        }
+
+        self.persistency
+            .ladd(&topic_string, &subscriber_string)
+            .map(|_| ())
+            .ok_or_else(|| {
+                PersistencyError::internal_error(
+                    "Error setting notification configuration in persistency",
+                )
             })
     }
 
@@ -574,9 +582,16 @@ impl NotificationStore {
     pub(crate) fn remove_notifyee(
         &mut self,
         subscriber: &SubscriberUUri,
+        topic: &TopicUUri,
     ) -> Result<(), PersistencyError> {
+        let topic_string = topic.to_uri(Self::PERSIST_UP_SCHEMA);
+        if !self.persistency.lexists(&topic_string) {
+            return Ok(());
+        }
+
+        let subscriber_string = subscriber.to_uri(Self::PERSIST_UP_SCHEMA);
         self.persistency
-            .rem(&subscriber.to_uri(Self::PERSIST_UP_SCHEMA))
+            .lrem_value(&topic_string, &subscriber_string)
             .map_err(|e| {
                 PersistencyError::internal_error(format!(
                     "Error setting notification configuration in persistency {e}"
@@ -586,20 +601,33 @@ impl NotificationStore {
         Ok(())
     }
 
-    /// Returns a list of all topic keys from custom notification persistency
-    /// * return a `Vec<TopicUUri>` list of topic UUris
+    /// Returns a list of all subscribers that have registered to be notified on change of topic state
+    ///
+    /// # Arguments
+    ///
+    /// * `topic` - UUri of the topic that subscribers registered to be notified about.
+    ///
+    /// # Returns
+    ///
+    /// * return a `Vec<SubscriberUUri>` list of subscriber UUris that want to be notified about topic state changes
     /// * returns a `PersistencyError` in case something went wrong with data serialization or storage
-    pub(crate) fn get_topics(&mut self) -> Result<Vec<TopicUUri>, PersistencyError> {
+    pub(crate) fn get_subscribers_registered_for_topic(
+        &mut self,
+        topic: &TopicUUri,
+    ) -> Result<Vec<SubscriberUUri>, PersistencyError> {
+        let topic_string = topic.to_uri(Self::PERSIST_UP_SCHEMA);
+
+        if !self.persistency.lexists(&topic_string) {
+            return Ok(vec![]);
+        }
+
         let mut result = vec![];
 
-        for entry in self.persistency.iter() {
-            if let Some(bytes) = entry.get_value::<Vec<SerializedTopicState>>() {
-                let topic = deserialize_uuri(&bytes).map_err(|e| {
-                    PersistencyError::serialization_error(format!(
-                        "Error deserializing notification topic {e}"
-                    ))
-                })?;
-                result.push(topic);
+        for entry in self.persistency.liter(&topic_string) {
+            if let Some(subscriber_string) = entry.get_item::<String>() {
+                let subscriber = UUri::try_from(subscriber_string)
+                    .map_err(|e| PersistencyError::serialization_error(e.to_string()))?;
+                result.push(subscriber);
             }
         }
         Ok(result)
@@ -612,57 +640,61 @@ impl NotificationStore {
         for key in keys {
             self.persistency.rem(&key).map_err(|e| {
                 PersistencyError::internal_error(format!(
-                    "Error removing notification entries from persistency {e}"
+                    "Error removing registered-for-notifications from persistency {e}"
                 ))
             })?;
         }
         self.persistency.dump().map_err(|e| {
             PersistencyError::internal_error(format!(
-                "Error dumping cleared notifications to persistency {e}"
+                "Error dumping cleared registered-for-notification data to persistency {e}"
             ))
         })?;
-
         Ok(())
     }
 
     pub(crate) fn get_data(
         &self,
-    ) -> Result<HashMap<SubscriberUUri, TopicUUri>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<(SubscriberUUri, TopicUUri)>, Box<dyn std::error::Error>> {
         #[allow(clippy::mutable_key_type)]
-        let mut map: HashMap<SubscriberUUri, TopicUUri> = HashMap::new();
+        let mut list: Vec<(SubscriberUUri, TopicUUri)> = Vec::new();
 
-        for kv in self.persistency.iter() {
-            if let Some(bytes) = kv.get_value::<Vec<SerializedTopicState>>() {
-                let value = deserialize_uuri(&bytes)?;
-                map.insert(UUri::try_from(kv.get_key())?, value);
+        let topic_strings = self.persistency.get_all();
+        for topic_string in topic_strings {
+            for entry in self.persistency.liter(&topic_string) {
+                if let Some(subscriber_string) = entry.get_item::<String>() {
+                    let subscriber = UUri::try_from(subscriber_string)?;
+                    let topic = UUri::try_from(topic_string.clone())?;
+                    list.push((subscriber, topic));
+                }
             }
         }
 
-        Ok(map)
+        Ok(list)
     }
 
     #[cfg(test)]
     #[allow(clippy::mutable_key_type)]
     pub(crate) fn set_data(
         &mut self,
-        map: HashMap<SubscriberUUri, TopicUUri>,
+        list: Vec<(SubscriberUUri, TopicUUri)>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        for (key, value) in map {
-            let _r = self
-                .persistency
-                .set(&key.to_uri(PERSIST_UP_SCHEMA), &serialize_uuri(&value)?);
+        for (subscriber, topic) in list {
+            let subscriber_string = subscriber.to_uri(Self::PERSIST_UP_SCHEMA);
+            let topic_string = topic.to_uri(Self::PERSIST_UP_SCHEMA);
+
+            if !self.persistency.lexists(&topic_string) {
+                self.persistency.lcreate(&topic_string).map_err(|e| {
+                    PersistencyError::internal_error(format!(
+                        "Error setting notification configuration in persistency {e}"
+                    ))
+                })?;
+            }
+
+            self.persistency.ladd(&topic_string, &subscriber_string);
         }
+
         Ok(())
     }
-}
-
-// custom serialization functions
-fn serialize_uuri(uuri: &UUri) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    Ok(uuri.write_to_bytes()?)
-}
-
-fn deserialize_uuri(bytes: &[u8]) -> Result<UUri, Box<dyn std::error::Error>> {
-    Ok(UUri::parse_from_bytes(bytes)?)
 }
 
 fn serialize_topic_state(
@@ -735,31 +767,7 @@ mod tests {
     // manager business logic are located in tests/persistency_tests.rs
 
     use super::*;
-    use crate::test_lib::{self};
     use test_case::test_case;
-
-    #[test_case(test_lib::helpers::subscriber_uri1(), &[10, 5, 76, 79, 67, 65, 76, 16, 128, 32, 24, 1, 32, 128, 32]; "Subscriber UUri")]
-    #[test_case(test_lib::helpers::local_topic1_uri(), &[10, 5, 76, 79, 67, 65, 76, 16, 128, 128, 64, 24, 1, 32, 199, 149, 2]; "Local UUri")]
-    #[test_case(test_lib::helpers::remote_topic1_uri(), &[10, 6, 82, 69, 77, 79, 84, 69, 16, 128, 160, 1, 24, 1, 32, 128, 64]; "Remote UUri")]
-    #[test_case(UUri::default(), &[]; "Empty UUri")]
-    #[tokio::test]
-    async fn test_serialize_deserialize_uuri(uri: UUri, bytes: &[u8]) {
-        helpers::init_once();
-
-        // To bytes
-        let serialized_bytes = serialize_uuri(&uri);
-        assert!(serialized_bytes.is_ok());
-
-        let serialized_bytes = serialized_bytes.unwrap();
-        assert_eq!(serialized_bytes, bytes);
-
-        // and back
-        let reconstructed_uri = deserialize_uuri(&serialized_bytes);
-        assert!(reconstructed_uri.is_ok());
-
-        let reconstructed_uri = reconstructed_uri.unwrap();
-        assert_eq!(reconstructed_uri, uri);
-    }
 
     #[test_case(TopicState::UNSUBSCRIBED, &[0,0,0,0]; "State UNSUBSCRIBED")]
     #[test_case(TopicState::SUBSCRIBE_PENDING, &[1,0,0,0]; "State SUBSCRIBE_PENDING")]

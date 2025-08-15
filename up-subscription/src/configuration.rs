@@ -19,6 +19,9 @@ use up_rust::{
     LocalUriProvider, UUri,
 };
 
+/// What uSubscription service uses as the resource ID for LocalUriProvider::get_source_uri()
+pub(crate) const SOURCE_URI_RESOURCE_ID: u16 = 0x00FF;
+
 /// Default subscription and notification command channel buffer size
 pub(crate) const DEFAULT_COMMAND_BUFFER_SIZE: usize = 1024;
 
@@ -128,7 +131,7 @@ impl LocalUriProvider for USubscriptionConfiguration {
             &self.authority_name,
             USUBSCRIPTION_TYPE_ID,
             USUBSCRIPTION_VERSION_MAJOR,
-            0x0,
+            SOURCE_URI_RESOURCE_ID,
         )
         .expect("Error constructing usubscription UUri")
     }
