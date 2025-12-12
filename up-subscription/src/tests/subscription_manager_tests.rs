@@ -37,8 +37,7 @@ mod tests {
         notification_manager::NotificationEvent,
         persistency,
         subscription_manager::{
-            handle_message, InternalSubscriptionEvent, RequestKind, SubscriptionEntry,
-            SubscriptionEvent,
+            self, InternalSubscriptionEvent, RequestKind, SubscriptionEntry, SubscriptionEvent,
         },
         test_lib,
         usubscription::{ExpiryTimestamp, SubscriberUUri, TopicUUri},
@@ -99,7 +98,7 @@ mod tests {
 
             let shutdown_notification_cloned = shutdown_notification.clone();
             helpers::spawn_and_log_error(async move {
-                handle_message(
+                subscription_manager::handle_message(
                     config.clone(),
                     Arc::new(transport_mock),
                     command_receiver,
@@ -195,7 +194,7 @@ mod tests {
             let notification_sender_cloned = notification_sender.clone();
             let shutdown_notification_cloned = shutdown_notification.clone();
             helpers::spawn_and_log_error(async move {
-                handle_message(
+                subscription_manager::handle_message(
                     config.clone(),
                     Arc::new(transport_mock),
                     command_receiver,
@@ -247,7 +246,7 @@ mod tests {
 
             let shutdown_notification_cloned = shutdown_notification.clone();
             helpers::spawn_and_log_error(async move {
-                handle_message(
+                subscription_manager::handle_message(
                     config,
                     mock_transport,
                     command_receiver,
