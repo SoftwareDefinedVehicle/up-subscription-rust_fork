@@ -679,16 +679,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "daemonize2"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "709ab16d5ef7935369a4ab53bd3b662c3908fb02b655225eba9f3a8bbf0ba263"
-dependencies = [
- "errno",
- "libc",
-]
-
-[[package]]
 name = "darling"
 version = "0.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4115,7 +4105,7 @@ dependencies = [
 
 [[package]]
 name = "up-subscription"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "env_logger",
@@ -4132,11 +4122,10 @@ dependencies = [
 
 [[package]]
 name = "up-subscription-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "clap",
  "clap-num",
- "daemonize2",
  "log",
  "serde_json",
  "tokio",

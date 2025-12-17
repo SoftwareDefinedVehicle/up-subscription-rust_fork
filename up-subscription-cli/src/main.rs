@@ -20,9 +20,6 @@ use tokio::signal;
 use up_rust::{LocalUriProvider, UTransport};
 use up_subscription::{ConfigurationError, USubscriptionConfiguration, USubscriptionService};
 
-#[cfg(unix)]
-use daemonize2::Daemonize;
-
 #[cfg(feature = "mqtt5")]
 use up_transport_mqtt5::Mqtt5TransportOptions;
 
@@ -84,11 +81,6 @@ pub(crate) struct Args {
     /// Authority name for usubscription service
     #[arg(short, long, env)]
     authority: String,
-
-    /// Run as a daemon (in the background)
-    #[cfg(unix)]
-    #[arg(short, long, default_value_t = false)]
-    daemon: bool,
 
     /// The transport implementation to use
     #[arg(short, long, env)]
@@ -188,18 +180,6 @@ async fn main() {
         "Usubscription service running and listeners up on {}",
         _config.get_source_uri()
     );
-
-    // Daemonize or wait for shutdown signal
-    #[cfg(unix)]
-    if args.daemon {
-        let daemonize = Daemonize::new();
-        match unsafe { daemonize.start() } {
-            Ok(_) => {
-                debug!("Success, running daemonized");
-            }
-            Err(e) => error!("Error, {e}"),
-        }
-    }
 
     signal::ctrl_c().await.expect("failed to listen for event");
     info!("Stopping usubscription service");
