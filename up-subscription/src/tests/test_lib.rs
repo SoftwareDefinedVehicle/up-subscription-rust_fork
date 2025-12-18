@@ -157,8 +157,8 @@ pub(crate) mod helpers {
     };
     use up_rust::UUri;
 
-    pub(crate) const LOCAL_AUTHORITY: &str = "LOCAL";
-    pub(crate) const REMOTE_AUTHORITY: &str = "REMOTE";
+    pub(crate) const LOCAL_AUTHORITY: &str = "local";
+    pub(crate) const REMOTE_AUTHORITY: &str = "remote";
 
     pub(crate) const SUBSCRIBER1_ID: u32 = 0x0000_1000;
     pub(crate) const SUBSCRIBER1_VERSION: u8 = 0x01;

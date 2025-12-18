@@ -260,8 +260,8 @@ mod tests {
     // [utest->dsn~usubscription-unregister-notifications-invalid-topic~1]
     #[test_case("up:/0/0/0"; "Bad topic UUri")]
     #[test_case("up://*/100000/1/8AC7"; "Wildcard authority in topic UUri")]
-    #[test_case("up://LOCAL/FFFF0000/1/8AC7"; "Wildcard entity id in topic UUri")]
-    #[test_case("up://LOCAL/100000/1/FFFF"; "Wildcard resource id in topic UUri")]
+    #[test_case("up://local/FFFF0000/1/8AC7"; "Wildcard entity id in topic UUri")]
+    #[test_case("up://local/100000/1/FFFF"; "Wildcard resource id in topic UUri")]
     #[tokio::test]
     async fn test_invalid_topic_uri(topic: &str) {
         helpers::init_once();

@@ -20,22 +20,19 @@ use tokio::signal;
 use up_rust::{LocalUriProvider, UTransport};
 use up_subscription::{ConfigurationError, USubscriptionConfiguration, USubscriptionService};
 
-#[cfg(unix)]
-use daemonize::Daemonize;
+#[cfg(feature = "mqtt5")]
+use up_transport_mqtt5::Mqtt5TransportOptions;
 
-// #[cfg(feature = "mqtt5")]
-// use up_transport_mqtt5::Mqtt5TransportOptions;
-
-// #[cfg(feature = "zenoh")]
-// use crate::transport::zenoh::ZenohArgs;
+#[cfg(feature = "zenoh")]
+use crate::transport::zenoh::ZenohArgs;
 
 mod transport;
 #[cfg(feature = "local")]
 use transport::get_local_transport;
-// #[cfg(feature = "mqtt5")]
-// use transport::get_mqtt5_transport;
-// #[cfg(feature = "zenoh")]
-// use transport::get_zenoh_transport;
+#[cfg(feature = "mqtt5")]
+use transport::get_mqtt5_transport;
+#[cfg(feature = "zenoh")]
+use transport::get_zenoh_transport;
 
 fn between_1_and_1024(s: &str) -> Result<usize, String> {
     number_range(s, 1, 1024)
@@ -71,10 +68,10 @@ enum Transport {
     None,
     #[cfg(feature = "local")]
     Local,
-    // #[cfg(feature = "mqtt5")]
-    // Mqtt5,
-    // #[cfg(feature = "zenoh")]
-    // Zenoh,
+    #[cfg(feature = "mqtt5")]
+    Mqtt5,
+    #[cfg(feature = "zenoh")]
+    Zenoh,
 }
 
 // All our args
@@ -84,11 +81,6 @@ pub(crate) struct Args {
     /// Authority name for usubscription service
     #[arg(short, long, env)]
     authority: String,
-
-    /// Run as a daemon (in the background)
-    #[cfg(unix)]
-    #[arg(short, long, default_value_t = false)]
-    daemon: bool,
 
     /// The transport implementation to use
     #[arg(short, long, env)]
@@ -113,13 +105,14 @@ pub(crate) struct Args {
     /// Increase verbosity of output, default is false (reduced verbosity)
     #[arg(short, long, env, default_value_t = false)]
     verbose: bool,
-    // #[cfg(feature = "mqtt5")]
-    // #[command(flatten)]
-    // mqtt_args: Mqtt5TransportOptions,
 
-    // #[cfg(feature = "zenoh")]
-    // #[command(flatten)]
-    // zenoh_args: ZenohArgs,
+    #[cfg(feature = "mqtt5")]
+    #[command(flatten)]
+    mqtt_args: Mqtt5TransportOptions,
+
+    #[cfg(feature = "zenoh")]
+    #[command(flatten)]
+    zenoh_args: ZenohArgs,
 }
 
 #[tokio::main]
@@ -127,13 +120,17 @@ async fn main() {
     let args = Args::parse();
 
     // Setup logging, get configuration
-    std::env::set_var("RUST_LOG", "info");
-    // #[cfg(feature = "zenoh")]
-    // std::env::set_var("RUST_LOG", "info,zenoh=warn");
-    if args.verbose {
-        std::env::set_var("RUST_LOG", "trace");
-        // #[cfg(feature = "zenoh")]
-        // std::env::set_var("RUST_LOG", "trace,zenoh=info");
+    unsafe {
+        // accept unsafe for now, as at this point this program definiely is not multi-threaded
+        std::env::set_var("RUST_LOG", "info");
+        #[cfg(feature = "zenoh")]
+        std::env::set_var("RUST_LOG", "info,zenoh=warn");
+
+        if args.verbose {
+            std::env::set_var("RUST_LOG", "trace");
+            #[cfg(feature = "zenoh")]
+            std::env::set_var("RUST_LOG", "trace,zenoh=info");
+        }
     }
     up_subscription::init_once();
 
@@ -153,20 +150,20 @@ async fn main() {
                 .inspect_err(|e| panic!("Error setting up local transport: {}", e.get_message()))
                 .unwrap(),
         ),
-        // #[cfg(feature = "mqtt5")]
-        // Transport::Mqtt5 => Some(
-        //     get_mqtt5_transport(_config.clone(), args.mqtt_args)
-        //         .await
-        //         .inspect_err(|e| panic!("Error setting up MQTT5 transport: {}", e.get_message()))
-        //         .unwrap(),
-        // ),
-        // #[cfg(feature = "zenoh")]
-        // Transport::Zenoh => Some(
-        //     get_zenoh_transport(_config.clone(), args.zenoh_args)
-        //         .await
-        //         .inspect_err(|e| panic!("Error setting up Zenoh transport: {}", e.get_message()))
-        //         .unwrap(),
-        // ),
+        #[cfg(feature = "mqtt5")]
+        Transport::Mqtt5 => Some(
+            get_mqtt5_transport(_config.clone(), args.mqtt_args)
+                .await
+                .inspect_err(|e| panic!("Error setting up MQTT5 transport: {}", e.get_message()))
+                .unwrap(),
+        ),
+        #[cfg(feature = "zenoh")]
+        Transport::Zenoh => Some(
+            get_zenoh_transport(_config.clone(), args.zenoh_args)
+                .await
+                .inspect_err(|e| panic!("Error setting up Zenoh transport: {}", e.get_message()))
+                .unwrap(),
+        ),
         Transport::None => None,
     };
 
@@ -183,18 +180,6 @@ async fn main() {
         "Usubscription service running and listeners up on {}",
         _config.get_source_uri()
     );
-
-    // Daemonize or wait for shutdown signal
-    #[cfg(unix)]
-    if args.daemon {
-        let daemonize = Daemonize::new();
-        match daemonize.start() {
-            Ok(_) => {
-                debug!("Success, running daemonized");
-            }
-            Err(e) => error!("Error, {e}"),
-        }
-    }
 
     signal::ctrl_c().await.expect("failed to listen for event");
     info!("Stopping usubscription service");

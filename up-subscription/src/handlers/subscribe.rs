@@ -160,12 +160,18 @@ mod tests {
                 .await
                 .unwrap();
 
-            let response: SubscriptionResponse = result.unwrap().extract_protobuf().unwrap();
+            let response = result.expect("Expecting a usable result");
+            let response_data = response
+                .extract_protobuf::<SubscriptionResponse>()
+                .expect("No useful payload data");
             assert_eq!(
-                response.topic.unwrap_or_default(),
+                response_data.topic.unwrap_or_default(),
                 test_lib::helpers::local_topic1_uri()
             );
-            assert_eq!(response.status.unwrap().state, State::SUBSCRIBED.into());
+            assert_eq!(
+                response_data.status.unwrap().state,
+                State::SUBSCRIBED.into()
+            );
         });
 
         // validate subscription manager interaction
@@ -341,7 +347,11 @@ mod tests {
         });
 
         // validate subscription manager interaction
-        let subscription_event = subscription_receiver.recv().await.unwrap();
+        let subscription_event = subscription_receiver
+            .recv()
+            .await
+            .expect("Error receiving subscription event");
+
         match subscription_event {
             SubscriptionEvent::AddSubscription {
                 subscriber,
@@ -400,8 +410,8 @@ mod tests {
     // [utest->dsn~usubscription-subscribe-invalid-topic~1]
     #[test_case("up:/0/0/0"; "Bad topic UUri")]
     #[test_case("up://*/100000/1/8AC7"; "Wildcard authority in topic UUri")]
-    #[test_case("up://LOCAL/FFFF0000/1/8AC7"; "Wildcard entity id in topic UUri")]
-    #[test_case("up://LOCAL/100000/1/FFFF"; "Wildcard resource id in topic UUri")]
+    #[test_case("up://local/FFFF0000/1/8AC7"; "Wildcard entity id in topic UUri")]
+    #[test_case("up://local/100000/1/FFFF"; "Wildcard resource id in topic UUri")]
     #[tokio::test]
     async fn test_invalid_topic_uri(topic: &str) {
         helpers::init_once();

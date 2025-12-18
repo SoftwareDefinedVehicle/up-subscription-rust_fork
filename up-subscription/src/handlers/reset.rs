@@ -257,7 +257,7 @@ mod tests {
 
         // create request and other required object(s)
         let bad_source =
-            UUri::try_from("up://LOCAL/1000/1/F").expect("Error during test case setup");
+            UUri::try_from("up://local/1000/1/F").expect("Error during test case setup");
 
         let request_payload = UPayload::try_from_protobuf(ResetRequest::default()).unwrap();
         let message_attributes = UAttributes {
