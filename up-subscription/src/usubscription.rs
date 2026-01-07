@@ -20,6 +20,7 @@ use tokio::{
     task::JoinHandle,
 };
 
+use tracing::info;
 use up_rust::{
     communication::{InMemoryRpcServer, RpcServer},
     core::usubscription::{
@@ -27,7 +28,7 @@ use up_rust::{
         RESOURCE_ID_REGISTER_FOR_NOTIFICATIONS, RESOURCE_ID_RESET, RESOURCE_ID_SUBSCRIBE,
         RESOURCE_ID_UNREGISTER_FOR_NOTIFICATIONS, RESOURCE_ID_UNSUBSCRIBE,
     },
-    UCode, UStatus, UTransport, UUri,
+    LocalUriProvider, UCode, UStatus, UTransport, UUri,
 };
 
 use crate::{
@@ -80,6 +81,7 @@ pub struct USubscriptionStopper {
 
 impl USubscriptionStopper {
     pub async fn stop(&mut self) {
+        info!("Stopping uSubscription service");
         self.shutdown_notification.notify_waiters();
 
         self.subscription_joiner
@@ -111,8 +113,6 @@ impl USubscriptionService {
         config: Arc<USubscriptionConfiguration>,
         transport: Arc<dyn UTransport>,
     ) -> Result<USubscriptionStopper, UStatus> {
-        helpers::init_once();
-
         let server = Arc::new(InMemoryRpcServer::new(transport.clone(), config.clone()));
         let shutdown_notification = Arc::new(Notify::new());
 
@@ -121,7 +121,7 @@ impl USubscriptionService {
         let transport_cloned = transport.clone();
         let shutdown_notification_cloned = shutdown_notification.clone();
         let (notification_sender, notification_receiver) =
-            mpsc::channel::<NotificationEvent>(config.notification_command_buffer);
+            mpsc::channel::<NotificationEvent>(config.notification_command_buffer.into());
         let notification_joiner = helpers::spawn_and_log_error(async move {
             notification_manager::notification_engine(
                 config_cloned,
@@ -138,7 +138,7 @@ impl USubscriptionService {
         let transport_cloned = transport.clone();
         let shutdown_notification_cloned = shutdown_notification.clone();
         let (subscription_sender, subscription_receiver) =
-            mpsc::channel::<SubscriptionEvent>(config.subscription_command_buffer);
+            mpsc::channel::<SubscriptionEvent>(config.subscription_command_buffer.into());
         let notification_sender_cloned = notification_sender.clone();
         let subscription_joiner = helpers::spawn_and_log_error(async move {
             subscription_manager::handle_message(
@@ -153,6 +153,11 @@ impl USubscriptionService {
         });
 
         register_handlers(server, subscription_sender, notification_sender).await?;
+
+        info!(
+            "uSubscription service is up and running, listening on {}",
+            config.get_source_uri().to_uri(true)
+        );
 
         Ok(USubscriptionStopper {
             subscription_joiner: Some(subscription_joiner),

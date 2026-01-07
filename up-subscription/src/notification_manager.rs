@@ -11,10 +11,10 @@
  * SPDX-License-Identifier: Apache-2.0
  ********************************************************************************/
 
-use log::*;
 use std::sync::Arc;
-use tokio::sync::{mpsc::Receiver, mpsc::Sender, oneshot, Notify};
 
+use tokio::sync::{mpsc::Receiver, mpsc::Sender, oneshot, Notify};
+use tracing::{debug, error, warn};
 use up_rust::{
     core::usubscription::{
         usubscription_uri, SubscriberInfo, SubscriptionStatus, Update,
@@ -24,7 +24,6 @@ use up_rust::{
 };
 
 use crate::{
-    helpers,
     persistency::{self, PersistencyError},
     usubscription::{SubscriberUUri, TopicUUri, INCLUDE_SCHEMA},
     USubscriptionConfiguration,
@@ -119,8 +118,6 @@ pub(crate) async fn notification_engine(
     mut events: Receiver<NotificationEvent>,
     shutdown: Arc<Notify>,
 ) {
-    helpers::init_once();
-
     // keep track of which subscriber wants to be notified on which topic
     let mut notifications = persistency::NotificationStore::new(&configuration);
 

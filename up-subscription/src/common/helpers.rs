@@ -11,22 +11,15 @@
  * SPDX-License-Identifier: Apache-2.0
  ********************************************************************************/
 
-use log::*;
 use std::future::Future;
-use std::sync::Once;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::{task, time::Duration};
 
+use tokio::{task, time::Duration};
+use tracing::error;
 use up_rust::{
     communication::{ServiceInvocationError, UPayload},
     UAttributes, UUri,
 };
-
-static INIT: Once = Once::new();
-
-pub fn init_once() {
-    INIT.call_once(env_logger::init);
-}
 
 type SpawnResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 

@@ -11,8 +11,7 @@
  * SPDX-License-Identifier: Apache-2.0
  ********************************************************************************/
 
-use std::path::{Path, PathBuf};
-use uriparse::Authority;
+use std::path::PathBuf;
 
 use up_rust::{
     core::usubscription::{USUBSCRIPTION_TYPE_ID, USUBSCRIPTION_VERSION_MAJOR},
@@ -20,7 +19,7 @@ use up_rust::{
 };
 
 /// Default subscription and notification command channel buffer size
-pub(crate) const DEFAULT_COMMAND_BUFFER_SIZE: usize = 1024;
+pub const DEFAULT_COMMAND_BUFFER_SIZE: u16 = 1024;
 
 #[derive(Debug)]
 pub struct ConfigurationError(String);
@@ -42,11 +41,36 @@ impl std::fmt::Display for ConfigurationError {
 
 impl std::error::Error for ConfigurationError {}
 
+// only accept persistency path if it points to an existing directory; if None set to cwd
+fn get_storage_path(path: Option<String>) -> Result<PathBuf, ConfigurationError> {
+    match path {
+        None => Ok(std::env::current_dir().map_err(|e| {
+            ConfigurationError::new(format!("Error retrieving current working directory: {e}"))
+        })?),
+        Some(p) => {
+            let pb = PathBuf::from(&p);
+            if !pb.exists() {
+                return Err(ConfigurationError::new(format!(
+                    "Persistency storage path '{}' does not exist",
+                    p
+                )));
+            }
+            if !pb.is_dir() {
+                return Err(ConfigurationError::new(format!(
+                    "Persistency storage path '{}' is not a directory",
+                    p
+                )));
+            }
+            Ok(pb)
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct USubscriptionConfiguration {
     pub authority_name: String,
-    pub subscription_command_buffer: usize,
-    pub notification_command_buffer: usize,
+    pub subscription_command_buffer: u16,
+    pub notification_command_buffer: u16,
     pub persistency_enabled: bool,
     pub persistency_path: PathBuf,
 }
@@ -71,30 +95,13 @@ impl USubscriptionConfiguration {
     /// Returns a ConfigurationError in case an invalid Authority string is provided; this is determined via the uriparse crate Authority::try_from() method.
     pub fn create(
         authority_name: String,
-        subscription_command_buffer: Option<usize>,
-        notification_command_buffer: Option<usize>,
+        subscription_command_buffer: Option<u16>,
+        notification_command_buffer: Option<u16>,
         persistency_enabled: bool,
         persistency_path: Option<String>,
     ) -> Result<USubscriptionConfiguration, ConfigurationError> {
-        if let Err(e) = Authority::try_from(authority_name.as_bytes()) {
-            return Err(ConfigurationError::new(format!(
-                "Invalid authority name: {e}"
-            )));
-        }
-
-        // only accept persistency path if it points to an existing directory; if None set to cwd
-        let persistency_path = if let Some(path_string) = persistency_path {
-            let p = Path::new(&path_string);
-            p.try_exists().unwrap_or_else(|_| {
-                panic!("Persistency storage path does not exist {path_string}")
-            });
-            if !p.is_dir() {
-                panic!("Persistency storage path is not a directory {path_string}");
-            }
-            p.to_path_buf()
-        } else {
-            std::env::current_dir().expect("Error retrieving current working directory")
-        };
+        let authority_name = UUri::verify_authority(authority_name.as_str())
+            .map_err(|e| ConfigurationError::new(format!("Invalid authority name: {e}")))?;
 
         Ok(USubscriptionConfiguration {
             authority_name,
@@ -105,7 +112,7 @@ impl USubscriptionConfiguration {
                 .unwrap_or(DEFAULT_COMMAND_BUFFER_SIZE)
                 .clamp(1, DEFAULT_COMMAND_BUFFER_SIZE),
             persistency_enabled,
-            persistency_path,
+            persistency_path: get_storage_path(persistency_path)?,
         })
     }
 }

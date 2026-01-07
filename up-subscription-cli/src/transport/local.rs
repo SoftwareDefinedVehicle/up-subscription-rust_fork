@@ -13,8 +13,11 @@
 
 use std::sync::Arc;
 
-use up_rust::{local_transport::LocalTransport, UStatus, UTransport};
+use tracing::info;
+use up_rust::{local_transport::LocalTransport, UTransport};
 
-pub(crate) async fn get_local_transport() -> Result<Arc<dyn UTransport>, UStatus> {
+pub(crate) async fn get_local_transport() -> Result<Arc<dyn UTransport>, Box<dyn std::error::Error>>
+{
+    info!("Using in-memory local uProtocol transport");
     Ok(Arc::new(LocalTransport::default()))
 }

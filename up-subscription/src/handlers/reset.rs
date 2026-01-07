@@ -12,8 +12,8 @@
  ********************************************************************************/
 
 use async_trait::async_trait;
-use log::*;
 use tokio::{sync::mpsc::Sender, sync::oneshot};
+use tracing::error;
 
 use up_rust::{
     communication::{RequestHandler, ServiceInvocationError, UPayload},
@@ -91,13 +91,11 @@ mod tests {
 
     use up_rust::UUri;
 
-    use crate::{helpers, tests::test_lib};
+    use crate::tests::test_lib;
 
     // [utest->dsn~usubscription-reset-protobuf~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_reset_success() {
-        helpers::init_once();
-
         // create request and other required object(s)
         let mut source_uri = test_lib::helpers::subscriber_uri1();
         source_uri.resource_id = up_rust::core::usubscription::USUBSCRIPTION_TYPE_ID;
@@ -133,10 +131,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_wrong_resource_id() {
-        helpers::init_once();
-
         // create request and other required object(s)
         let request_payload = UPayload::try_from_protobuf(ResetRequest::default()).unwrap();
         let message_attributes = UAttributes {
@@ -164,10 +160,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_no_source_uri() {
-        helpers::init_once();
-
         // create request and other required object(s)
         let request_payload = UPayload::try_from_protobuf(ResetRequest::default()).unwrap();
 
@@ -191,10 +185,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_no_request_payload() {
-        helpers::init_once();
-
         // create request and other required object(s)
         let message_attributes = UAttributes {
             source: Some(test_lib::helpers::subscriber_uri1()).into(),
@@ -217,10 +209,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_wrong_request_payload_type() {
-        helpers::init_once();
-
         // create request and other required object(s)
         let unsubscribe_request =
             test_lib::helpers::unsubscribe_request(test_lib::helpers::local_topic1_uri());
@@ -251,10 +241,8 @@ mod tests {
     }
 
     // [utest->req~usubscription-reset-only-usubscription~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_wrong_source_entitytype() {
-        helpers::init_once();
-
         // create request and other required object(s)
         let bad_source =
             UUri::try_from("up://local/1000/1/F").expect("Error during test case setup");

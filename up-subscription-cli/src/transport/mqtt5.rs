@@ -13,16 +13,16 @@
 
 use std::sync::Arc;
 
-use up_rust::{LocalUriProvider, UStatus, UTransport};
+use tracing::info;
+use up_rust::UTransport;
 use up_transport_mqtt5::{Mqtt5Transport, Mqtt5TransportOptions};
 
 pub(crate) async fn get_mqtt5_transport(
-    uri_provider: Arc<dyn LocalUriProvider>,
+    authority_name: &str,
     mqtt5_args: Mqtt5TransportOptions,
-) -> Result<Arc<dyn UTransport>, UStatus> {
-    Ok(
-        Mqtt5Transport::new(mqtt5_args, uri_provider.get_authority())
-            .await
-            .map(Arc::new)?,
-    )
+) -> Result<Arc<dyn UTransport>, Box<dyn std::error::Error>> {
+    info!("Using MQTT 5 uProtocol transport");
+    Ok(Mqtt5Transport::new(mqtt5_args, authority_name)
+        .await
+        .map(Arc::new)?)
 }

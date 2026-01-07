@@ -38,7 +38,9 @@ For a batteries-included approach to running up-subscription-rust, the `up-subsc
 mod usubscription;
 pub use usubscription::*;
 mod configuration;
-pub use configuration::{ConfigurationError, USubscriptionConfiguration};
+pub use configuration::{
+    ConfigurationError, USubscriptionConfiguration, DEFAULT_COMMAND_BUFFER_SIZE,
+};
 
 // actors implementing the backend management logic for tracking subscriptions etc
 mod notification_manager;
@@ -62,7 +64,6 @@ pub(crate) mod handlers {
 mod common {
     pub(crate) mod helpers;
 }
-pub use common::helpers::init_once;
 pub(crate) use common::*;
 
 #[cfg(test)]

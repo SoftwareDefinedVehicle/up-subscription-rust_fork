@@ -11,13 +11,11 @@
  * SPDX-License-Identifier: Apache-2.0
  ********************************************************************************/
 
-use clap::Parser;
-use clap_num::number_range;
-use log::*;
 use std::sync::Arc;
-use tokio::signal;
 
-use up_rust::{LocalUriProvider, UTransport};
+use clap::Parser;
+use tokio::signal;
+use tracing::error;
 use up_subscription::{ConfigurationError, USubscriptionConfiguration, USubscriptionService};
 
 #[cfg(feature = "mqtt5")]
@@ -27,176 +25,110 @@ use up_transport_mqtt5::Mqtt5TransportOptions;
 use crate::transport::zenoh::ZenohArgs;
 
 mod transport;
-#[cfg(feature = "local")]
 use transport::get_local_transport;
 #[cfg(feature = "mqtt5")]
 use transport::get_mqtt5_transport;
 #[cfg(feature = "zenoh")]
 use transport::get_zenoh_transport;
 
-fn between_1_and_1024(s: &str) -> Result<usize, String> {
-    number_range(s, 1, 1024)
-}
-
-#[derive(Debug)]
-pub enum StartupError {
-    ConfigurationError(String),
-}
-
-impl StartupError {
-    pub fn configuration_error<T>(message: T) -> StartupError
-    where
-        T: Into<String>,
-    {
-        Self::ConfigurationError(message.into())
-    }
-}
-
-impl std::fmt::Display for StartupError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ConfigurationError(e) => f.write_fmt(format_args!("Configuration error: {e}")),
-        }
-    }
-}
-
-impl std::error::Error for StartupError {}
-
-#[derive(clap::ValueEnum, Clone, Default, Debug)]
+#[derive(clap::Subcommand)]
 enum Transport {
-    #[default]
-    None,
-    #[cfg(feature = "local")]
+    /// Use in-memory local uProtocol transport
     Local,
-    #[cfg(feature = "mqtt5")]
-    Mqtt5,
     #[cfg(feature = "zenoh")]
-    Zenoh,
+    /// Use Zenoh as uProtocol transport
+    Zenoh {
+        #[command(flatten)]
+        options: ZenohArgs,
+    },
+    #[cfg(feature = "mqtt5")]
+    /// Use MQTT 5 as uProtocol transport
+    Mqtt5 {
+        #[command(flatten)]
+        options: Mqtt5TransportOptions,
+    },
 }
 
 // All our args
 #[derive(Parser)]
-#[command(version, about = "Rust implementation of Eclipse uProtocol USubscription service.", long_about = None)]
+#[command(version, about = "Rust implementation of Eclipse uProtocol Subscription service.", long_about = None)]
 pub(crate) struct Args {
-    /// Authority name for usubscription service
-    #[arg(short, long, env)]
+    /// Authority name for uSubscription service
+    #[arg(short, long, env, value_name = "NAME", value_parser=clap::builder::NonEmptyStringValueParser::new())]
     authority: String,
 
-    /// The transport implementation to use
-    #[arg(short, long, env)]
-    transport: Transport,
+    /// Number of subscription commands that can buffered - minimum 1, maximum 1024
+    #[arg(short, long, env, value_name="SIZE", value_parser=clap::value_parser!(u16).range(1..=1024), default_value_t = up_subscription::DEFAULT_COMMAND_BUFFER_SIZE)]
+    subscription_buffer: u16,
 
-    /// Buffer size of subscription command channel - minimum 1, maximum 1024, defaults to 1024
-    #[arg(short, long, env, value_parser=between_1_and_1024)]
-    subscription_buffer: Option<usize>,
+    /// Number of notifications that can buffered - minimum 1, maximum 1024
+    #[arg(short, long, env, value_name="SIZE", value_parser=clap::value_parser!(u16).range(1..=1024), default_value_t = up_subscription::DEFAULT_COMMAND_BUFFER_SIZE)]
+    notification_buffer: u16,
 
-    /// Buffer size of notification command channel - minimum 1, maximum 1024, defaults to 1024
-    #[arg(short, long, env, value_parser=between_1_and_1024)]
-    notification_buffer: Option<usize>,
-
-    /// Enable or disable persistency, default is true (enable)
-    #[arg(short, long, env, default_value_t = true)]
+    /// Disable persistency of subscription and notification data
+    #[arg(long="no-persistency", env="NO_PERSISTENCY", default_value_t = true, action=clap::ArgAction::SetFalse)]
     persistency: bool,
 
     /// Filesystem location for storing persistent data, default is current working directory
-    #[arg(long, env)]
+    #[arg(long, env, value_name = "PATH")]
     storage_path: Option<String>,
 
-    /// Increase verbosity of output, default is false (reduced verbosity)
+    /// Increase verbosity of output
     #[arg(short, long, env, default_value_t = false)]
     verbose: bool,
 
-    #[cfg(feature = "mqtt5")]
-    #[command(flatten)]
-    mqtt_args: Mqtt5TransportOptions,
+    #[command(subcommand)]
+    transport: Transport,
+}
 
-    #[cfg(feature = "zenoh")]
-    #[command(flatten)]
-    zenoh_args: ZenohArgs,
+impl TryFrom<&Args> for USubscriptionConfiguration {
+    type Error = ConfigurationError;
+
+    fn try_from(value: &Args) -> Result<Self, Self::Error> {
+        USubscriptionConfiguration::create(
+            value.authority.clone(),
+            Some(value.notification_buffer),
+            Some(value.subscription_buffer),
+            value.persistency,
+            value.storage_path.clone(),
+        )
+    }
+}
+
+fn init_logging(args: &Args) {
+    if args.verbose {
+        tracing_subscriber::fmt()
+            .with_env_filter("trace,zenoh=info")
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter("info,zenoh=warn")
+            .init();
+    }
 }
 
 #[tokio::main]
-async fn main() {
-    let args = Args::parse();
-
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Setup logging, get configuration
-    unsafe {
-        // accept unsafe for now, as at this point this program definiely is not multi-threaded
-        std::env::set_var("RUST_LOG", "info");
-        #[cfg(feature = "zenoh")]
-        std::env::set_var("RUST_LOG", "info,zenoh=warn");
-
-        if args.verbose {
-            std::env::set_var("RUST_LOG", "trace");
-            #[cfg(feature = "zenoh")]
-            std::env::set_var("RUST_LOG", "trace,zenoh=info");
-        }
-    }
-    up_subscription::init_once();
-
-    let _config = match config_from_args(&args) {
-        Err(e) => {
-            panic!("Configuration error: {e}")
-        }
-        Ok(config) => Arc::new(config),
-    };
+    let args = Args::parse();
+    init_logging(&args);
+    let config = USubscriptionConfiguration::try_from(&args).map(Arc::new)?;
 
     // Deal with transport module that we're to use
-    let transport: Option<Arc<dyn UTransport>> = match args.transport {
-        #[cfg(feature = "local")]
-        Transport::Local => Some(
-            get_local_transport()
-                .await
-                .inspect_err(|e| panic!("Error setting up local transport: {}", e.get_message()))
-                .unwrap(),
-        ),
+    let transport = match args.transport {
+        Transport::Local => get_local_transport().await,
         #[cfg(feature = "mqtt5")]
-        Transport::Mqtt5 => Some(
-            get_mqtt5_transport(_config.clone(), args.mqtt_args)
-                .await
-                .inspect_err(|e| panic!("Error setting up MQTT5 transport: {}", e.get_message()))
-                .unwrap(),
-        ),
+        Transport::Mqtt5 { options } => get_mqtt5_transport(&args.authority, options).await,
         #[cfg(feature = "zenoh")]
-        Transport::Zenoh => Some(
-            get_zenoh_transport(_config.clone(), args.zenoh_args)
-                .await
-                .inspect_err(|e| panic!("Error setting up Zenoh transport: {}", e.get_message()))
-                .unwrap(),
-        ),
-        Transport::None => None,
-    };
-
-    if transport.is_none() {
-        panic!("No valid transport protocol");
-    }
+        Transport::Zenoh { options } => get_zenoh_transport(&args.authority, options).await,
+    }?;
 
     // Set up and run USubscription service
-    let mut ustop = USubscriptionService::run(_config.clone(), transport.as_ref().unwrap().clone())
+    let mut ustop = USubscriptionService::run(config.clone(), transport.clone())
         .await
-        .expect("Error starting usubscription service");
-
-    info!(
-        "Usubscription service running and listeners up on {}",
-        _config.get_source_uri()
-    );
+        .inspect_err(|e| error!("Error starting uSubscription service: {}", e))?;
 
     signal::ctrl_c().await.expect("failed to listen for event");
-    info!("Stopping usubscription service");
     ustop.stop().await;
-}
-
-fn config_from_args(args: &Args) -> Result<USubscriptionConfiguration, ConfigurationError> {
-    let authority: &str = args.authority.trim();
-    if authority.is_empty() {
-        return Err(ConfigurationError::new("Authority name empty or missing"));
-    }
-
-    USubscriptionConfiguration::create(
-        authority.to_string(),
-        args.notification_buffer,
-        args.subscription_buffer,
-        args.persistency,
-        args.storage_path.clone(),
-    )
+    Ok(())
 }
