@@ -11,15 +11,15 @@
  * SPDX-License-Identifier: Apache-2.0
  ********************************************************************************/
 
-use log::*;
 #[cfg(test)]
 use std::collections::HashMap;
 use std::{sync::Arc, time::Duration};
+
 use tokio::{
     sync::{mpsc, mpsc::Receiver, mpsc::Sender, oneshot, Notify},
     time::sleep,
 };
-
+use tracing::{debug, error, warn};
 use up_rust::{
     communication::{CallOptions, InMemoryRpcClient, RpcClient},
     core::usubscription::{
@@ -147,8 +147,6 @@ pub(crate) async fn handle_message(
     notification_sender: Sender<NotificationEvent>,
     shutdown: Arc<Notify>,
 ) {
-    helpers::init_once();
-
     // track subscribers for topics - if you're in this list, you have SUBSCRIBED, otherwise you're considered UNSUBSCRIBED
     // [impl->req~usubscription-subscribe-persistency~1]
     let mut subscriptions = persistency::SubscriptionsStore::new(&configuration);
@@ -833,10 +831,8 @@ mod tests {
     }
 
     // [utest->req~usubscription-subscribe-expiration~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_schedule_future_unsubscribe() {
-        helpers::init_once();
-
         let (internal_cmd_sender, mut internal_cmd_receiver) =
             mpsc::channel::<InternalSubscriptionEvent>(INTERNAL_COMMAND_BUFFER_SIZE);
 
@@ -871,10 +867,8 @@ mod tests {
     }
 
     // [utest->req~usubscription-subscribe-expiration~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_schedule_past_unsubscribe() {
-        helpers::init_once();
-
         let (internal_cmd_sender, mut internal_cmd_receiver) =
             mpsc::channel::<InternalSubscriptionEvent>(INTERNAL_COMMAND_BUFFER_SIZE);
 
@@ -908,10 +902,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_remote_subscribe() {
-        helpers::init_once();
-
         let expected_topic = test_lib::helpers::remote_topic1_uri();
 
         // build request
@@ -961,9 +953,8 @@ mod tests {
         };
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_remote_unsubscribe() {
-        helpers::init_once();
         let expected_topic = test_lib::helpers::remote_topic1_uri();
 
         // build request

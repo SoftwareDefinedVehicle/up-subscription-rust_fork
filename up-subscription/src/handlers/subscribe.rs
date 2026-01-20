@@ -11,11 +11,11 @@
  * SPDX-License-Identifier: Apache-2.0
  ********************************************************************************/
 
-use async_trait::async_trait;
-use log::*;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::{sync::mpsc::Sender, sync::oneshot};
 
+use async_trait::async_trait;
+use tokio::{sync::mpsc::Sender, sync::oneshot};
+use tracing::error;
 use up_rust::{
     communication::{RequestHandler, ServiceInvocationError, UPayload},
     core::usubscription::{
@@ -129,13 +129,11 @@ mod tests {
 
     use up_rust::{core::usubscription::State, UUri};
 
-    use crate::{helpers, tests::test_lib};
+    use crate::tests::test_lib;
 
     // [utest->dsn~usubscription-subscribe-protobuf~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_subscribe_success() {
-        helpers::init_once();
-
         // create request and other required object(s)
         let subscribe_request =
             test_lib::helpers::subscription_request(test_lib::helpers::local_topic1_uri(), None);
@@ -195,10 +193,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_wrong_resource_id() {
-        helpers::init_once();
-
         // create request and other required object(s)
         let subscribe_request =
             test_lib::helpers::subscription_request(test_lib::helpers::local_topic1_uri(), None);
@@ -224,10 +220,8 @@ mod tests {
         assert!(result.is_err_and(|err| matches!(err, ServiceInvocationError::InvalidArgument(_))));
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_no_source_uri() {
-        helpers::init_once();
-
         // create request and other required object(s)
         let subscribe_request =
             test_lib::helpers::subscription_request(test_lib::helpers::local_topic1_uri(), None);
@@ -249,10 +243,8 @@ mod tests {
         assert!(result.is_err_and(|err| matches!(err, ServiceInvocationError::InvalidArgument(_))));
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_no_request_payload() {
-        helpers::init_once();
-
         // create request and other required object(s)
         let message_attributes = UAttributes {
             source: Some(test_lib::helpers::subscriber_uri1()).into(),
@@ -271,10 +263,8 @@ mod tests {
         assert!(result.is_err_and(|err| matches!(err, ServiceInvocationError::InvalidArgument(_))));
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_wrong_request_payload_type() {
-        helpers::init_once();
-
         // create request and other required object(s)
         let subscribe_request =
             test_lib::helpers::unsubscribe_request(test_lib::helpers::local_topic1_uri());
@@ -300,10 +290,8 @@ mod tests {
         assert!(result.is_err_and(|err| matches!(err, ServiceInvocationError::InvalidArgument(_))));
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_future_subscription() {
-        helpers::init_once();
-
         let future_secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -376,10 +364,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_expired_subscription() {
-        helpers::init_once();
-
         // create request and other required object(s)
         let subscribe_request = test_lib::helpers::subscription_request(
             test_lib::helpers::local_topic1_uri(),
@@ -412,10 +398,8 @@ mod tests {
     #[test_case("up://*/100000/1/8AC7"; "Wildcard authority in topic UUri")]
     #[test_case("up://local/FFFF0000/1/8AC7"; "Wildcard entity id in topic UUri")]
     #[test_case("up://local/100000/1/FFFF"; "Wildcard resource id in topic UUri")]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_invalid_topic_uri(topic: &str) {
-        helpers::init_once();
-
         // create request and other required object(s)
         let topic = UUri::from_str(topic).expect("Test parameter UUri failed to parse");
         let subscribe_request = test_lib::helpers::subscription_request(topic, None);

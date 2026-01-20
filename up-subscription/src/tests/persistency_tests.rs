@@ -16,7 +16,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::time::{sleep, Duration};
 
-    use crate::{helpers, persistency, test_lib, USubscriptionConfiguration};
+    use crate::{persistency, test_lib, USubscriptionConfiguration};
 
     fn get_configuration() -> USubscriptionConfiguration {
         USubscriptionConfiguration::create(
@@ -29,10 +29,8 @@ mod tests {
         .unwrap()
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_get_and_prune_expiring_subscriptions() {
-        helpers::init_once();
-
         let mut subscriptions = persistency::SubscriptionsStore::new(&get_configuration());
 
         // Prepare subscription persistency with two subscriptions, one with and one without expiry timestamp
@@ -88,10 +86,8 @@ mod tests {
     }
 
     // [utest->req~usubscription-reset~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_reset_subscriptions() {
-        helpers::init_once();
-
         let mut subscriptions = persistency::SubscriptionsStore::new(&get_configuration());
 
         let _ = subscriptions.add_subscription(
@@ -118,10 +114,8 @@ mod tests {
     }
 
     // [utest->req~usubscription-reset~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_reset_remote_subscriptions() {
-        helpers::init_once();
-
         let mut remote_topics = persistency::RemoteTopicsStore::new(&get_configuration());
 
         let _ = remote_topics.add_topic_or_get_state(&test_lib::helpers::local_topic1_uri());
@@ -140,10 +134,8 @@ mod tests {
     }
 
     // [utest->req~usubscription-reset~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_reset_notifications() {
-        helpers::init_once();
-
         let mut notifications = persistency::NotificationStore::new(&get_configuration());
 
         notifications
@@ -172,10 +164,8 @@ mod tests {
         assert_eq!(data.unwrap().len(), 0);
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_one_subscriber_multiple_topics() {
-        helpers::init_once();
-
         let mut notifications = persistency::NotificationStore::new(&get_configuration());
 
         let _ = notifications.add_notifyee(
@@ -193,10 +183,8 @@ mod tests {
         assert_eq!(data.unwrap().len(), 2);
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_multiple_subscribers_one_topic() {
-        helpers::init_once();
-
         let mut notifications = persistency::NotificationStore::new(&get_configuration());
 
         let _ = notifications.add_notifyee(

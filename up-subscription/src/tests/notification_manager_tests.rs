@@ -56,7 +56,7 @@ mod tests {
         fn new(config: Arc<USubscriptionConfiguration>, expected_message: Vec<UMessage>) -> Self {
             let shutdown_notification = Arc::new(Notify::new());
             let (command_sender, command_receiver) =
-                mpsc::channel::<NotificationEvent>(DEFAULT_COMMAND_BUFFER_SIZE);
+                mpsc::channel::<NotificationEvent>(DEFAULT_COMMAND_BUFFER_SIZE.into());
             let transport_mock =
                 test_lib::mocks::utransport_mock_for_notification_manager(expected_message);
 
@@ -143,9 +143,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_add_notifyee() {
-        helpers::init_once();
         let command_sender = CommandSender::new(Arc::new(CommandSender::get_config()), vec![]);
 
         let expected_subscriber = test_lib::helpers::subscriber_info1().uri.unwrap();
@@ -166,9 +165,8 @@ mod tests {
         assert!(notification_topics.contains(&(expected_subscriber, expected_topic)));
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_remove_notifyee() {
-        helpers::init_once();
         let command_sender = CommandSender::new(Arc::new(CommandSender::get_config()), vec![]);
 
         // prepare things
@@ -201,10 +199,8 @@ mod tests {
 
     // [utest->dsn~usubscription-change-notification-type~1]
     // [utest->dsn~usubscription-change-notification-topic~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_state_change() {
-        helpers::init_once();
-
         // prepare things
         // this is the status&topic&subscriber that the notification is about
         let changing_status = SubscriptionStatus {
@@ -247,10 +243,8 @@ mod tests {
     }
 
     // [utest->req~usubscription-register-notifications~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_state_change_direct_notification() {
-        helpers::init_once();
-
         // prepare things
         // this is the status&topic&subscriber that the notification is about
         let changing_status = SubscriptionStatus {
@@ -312,10 +306,8 @@ mod tests {
     }
 
     // [utest->req~usubscription-unregister-notifications~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_unregister_direct_notification() {
-        helpers::init_once();
-
         // prepare things
         // this is the status&topic&subscriber that the notification is about
         let changing_status = SubscriptionStatus {

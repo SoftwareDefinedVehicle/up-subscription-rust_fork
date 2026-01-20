@@ -11,11 +11,12 @@
  * SPDX-License-Identifier: Apache-2.0
  ********************************************************************************/
 
-use serde_json::json;
 use std::sync::Arc;
-use up_transport_zenoh::{zenoh_config, UPTransportZenoh};
 
-use up_rust::{LocalUriProvider, UStatus, UTransport};
+use serde_json::json;
+use tracing::info;
+use up_rust::UTransport;
+use up_transport_zenoh::{zenoh_config, UPTransportZenoh};
 
 #[derive(clap::ValueEnum, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum WhatAmIType {
@@ -54,6 +55,7 @@ pub(crate) struct ZenohArgs {
 }
 
 pub fn get_zenoh_config(args: ZenohArgs) -> zenoh_config::Config {
+    info!("Using Zenoh uProtocol transport");
     // Load the config from file path
     let mut zenoh_cfg = match &args.config {
         Some(path) => zenoh_config::Config::from_file(path).unwrap(),
@@ -92,19 +94,19 @@ pub fn get_zenoh_config(args: ZenohArgs) -> zenoh_config::Config {
 }
 
 pub(crate) async fn get_zenoh_transport(
-    uri_provider: Arc<dyn LocalUriProvider>,
+    authority_name: &str,
     zenoh_args: ZenohArgs,
-) -> Result<Arc<dyn UTransport>, UStatus> {
+) -> Result<Arc<dyn UTransport>, Box<dyn std::error::Error>> {
     UPTransportZenoh::try_init_log_from_env();
 
-    let zenoh_builder = UPTransportZenoh::builder(uri_provider.get_authority())
-        .map_err(|e| UStatus::fail(e.get_message()))?;
+    let zenoh_builder = UPTransportZenoh::builder(authority_name)
+        .map_err(|e| Box::<dyn std::error::Error>::from(e.get_message()))?;
 
     let transport_zenoh: Arc<dyn UTransport> = zenoh_builder
         .with_config(get_zenoh_config(zenoh_args))
         .build()
         .await
-        .map_err(|e| UStatus::fail(e.get_message()))
+        .map_err(|e| Box::<dyn std::error::Error>::from(e.get_message()))
         .map(Arc::new)?;
 
     Ok(transport_zenoh)

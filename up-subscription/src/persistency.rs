@@ -773,10 +773,8 @@ mod tests {
     #[test_case(TopicState::SUBSCRIBE_PENDING, &[1,0,0,0]; "State SUBSCRIBE_PENDING")]
     #[test_case(TopicState::SUBSCRIBED, &[2,0,0,0]; "State SUBSCRIBED")]
     #[test_case(TopicState::UNSUBSCRIBE_PENDING, &[3,0,0,0]; "State UNSUBSCRIBE_PENDING")]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_serialize_deserialize_topic_state(state: TopicState, bytes: &[u8]) {
-        helpers::init_once();
-
         // One way...
         let serialized_bytes = serialize_topic_state(&state);
         assert!(serialized_bytes.is_ok());
@@ -792,10 +790,8 @@ mod tests {
         assert_eq!(reconstructed_state, state);
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_validate_and_append_filename_success() {
-        helpers::init_once();
-
         let mut expected = PathBuf::from(".");
         expected.push("newfile");
 
@@ -809,10 +805,8 @@ mod tests {
     #[test_case( "\\"; "Relative path 3")]
     #[test_case( ""; "Empty filename")]
     #[test_case( "/dummy/newfile"; "Random path and name")]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_validate_and_append_filename_relative_paths(file: &str) {
-        helpers::init_once();
-
         let r = validate_and_append_filename(&PathBuf::from("."), file);
         assert!(r.is_err());
     }

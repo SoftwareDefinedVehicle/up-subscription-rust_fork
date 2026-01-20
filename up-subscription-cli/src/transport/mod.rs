@@ -11,9 +11,7 @@
  * SPDX-License-Identifier: Apache-2.0
  ********************************************************************************/
 
-#[cfg(feature = "local")]
 pub(crate) mod local;
-#[cfg(feature = "local")]
 pub(crate) use local::get_local_transport;
 
 #[cfg(feature = "mqtt5")]

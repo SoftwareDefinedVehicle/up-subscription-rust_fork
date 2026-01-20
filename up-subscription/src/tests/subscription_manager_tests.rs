@@ -14,14 +14,16 @@
 // [utest->dsn~usubscription-state-machine~1]
 #[cfg(test)]
 mod tests {
-    use protobuf::MessageFull;
     use std::collections::HashMap;
     use std::error::Error;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
     use std::vec;
+
+    use protobuf::MessageFull;
     use test_case::test_case;
     use tokio::sync::{mpsc, mpsc::Sender, oneshot, Notify};
+    use tracing::debug;
 
     use up_rust::{
         core::usubscription::{
@@ -66,9 +68,9 @@ mod tests {
             let transport_mock = MockTransport::default();
             let shutdown_notification = Arc::new(Notify::new());
             let (command_sender, command_receiver) =
-                mpsc::channel::<SubscriptionEvent>(DEFAULT_COMMAND_BUFFER_SIZE);
+                mpsc::channel::<SubscriptionEvent>(DEFAULT_COMMAND_BUFFER_SIZE.into());
             let (notification_sender, mut notification_receiver) =
-                mpsc::channel::<NotificationEvent>(config.notification_command_buffer);
+                mpsc::channel::<NotificationEvent>(config.notification_command_buffer.into());
 
             // Spawn notification receiver task
             let shutdown_notification_cloned = shutdown_notification.clone();
@@ -77,7 +79,7 @@ mod tests {
                     tokio::select! {
                         Some(event) = notification_receiver.recv() => {
                             if let NotificationEvent::StateChange { subscriber, topic, status, respond_to } = event {
-                               println!(
+                               debug!(
                                     "Change Notification received: {} - {} - {}",
                                     subscriber.unwrap().to_uri(true),
                                     topic.to_uri(true),
@@ -133,9 +135,9 @@ mod tests {
             let transport_mock = MockTransport::default();
             let shutdown_notification = Arc::new(Notify::new());
             let (command_sender, command_receiver) =
-                mpsc::channel::<SubscriptionEvent>(DEFAULT_COMMAND_BUFFER_SIZE);
+                mpsc::channel::<SubscriptionEvent>(DEFAULT_COMMAND_BUFFER_SIZE.into());
             let (notification_sender, mut notification_receiver) =
-                mpsc::channel::<NotificationEvent>(config.notification_command_buffer);
+                mpsc::channel::<NotificationEvent>(config.notification_command_buffer.into());
 
             // Spawn notification receiver task
             let shutdown_notification_cloned = shutdown_notification.clone();
@@ -149,7 +151,7 @@ mod tests {
                                 NotificationEvent::StateChange { .. } => {
                                     if let Some(pos) = expected_notifications.iter().position(|e| e == &event) {
                                         if let NotificationEvent::StateChange { subscriber, status, topic, respond_to } = event {
-                                            println!(
+                                            debug!(
                                                 "Change Notification received: {} - {} - {}",
                                                 subscriber.unwrap_or_default().to_uri(true),
                                                 topic.to_uri(true),
@@ -166,23 +168,23 @@ mod tests {
                                     }
                                 },
                                 NotificationEvent::SetNotificationTopics { notification_topics_replacement, respond_to } => {
-                                    println!("Notification Manager SetNotificationTopic command received");
+                                    debug!("Notification Manager SetNotificationTopic command received");
                                     notification_topics = notification_topics_replacement;
                                     let _ = respond_to.send(());
                                 },
                                 NotificationEvent::GetNotificationTopics { respond_to } =>  {
-                                    println!("Notification Manager GetNotificationTopic command received");
+                                    debug!("Notification Manager GetNotificationTopic command received");
                                     let _ = respond_to.send(notification_topics.clone());
                                 },
                                 NotificationEvent::Reset { respond_to } => {
-                                    println!("Notification Manager Reset command received");
+                                    debug!("Notification Manager Reset command received");
                                     let _ = respond_to.send(Ok(()));
                                 }
                                 _ => panic!("Received unexpected notification event: {event:?}")
                             }
                         },
                         _ = shutdown_notification_cloned.notified() => {
-                            println!("Shutting down notification reception loop");
+                            debug!("Shutting down notification reception loop");
                             break;
                         },
                     };
@@ -232,7 +234,7 @@ mod tests {
             let shutdown_notification = Arc::new(Notify::new());
 
             let (command_sender, command_receiver) =
-                mpsc::channel::<SubscriptionEvent>(DEFAULT_COMMAND_BUFFER_SIZE);
+                mpsc::channel::<SubscriptionEvent>(DEFAULT_COMMAND_BUFFER_SIZE.into());
 
             let mock_transport = Arc::new(
                 test_lib::mocks::utransport_mock_for_rpc(vec![(
@@ -242,7 +244,7 @@ mod tests {
                 .await,
             );
             let (notification_sender, _) =
-                mpsc::channel::<NotificationEvent>(config.notification_command_buffer);
+                mpsc::channel::<NotificationEvent>(config.notification_command_buffer.into());
 
             let shutdown_notification_cloned = shutdown_notification.clone();
             helpers::spawn_and_log_error(async move {
@@ -424,9 +426,8 @@ mod tests {
          (test_lib::helpers::local_topic1_uri(), test_lib::helpers::subscriber_uri2()),
          (test_lib::helpers::local_topic2_uri(), test_lib::helpers::subscriber_uri2())
          ]; "Multiple susbcriber-topic combinations")]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_subscribe(topic_subscribers: Vec<(TopicUUri, SubscriberUUri)>) {
-        helpers::init_once();
         let command_sender = CommandSender::new();
 
         // Prepare things
@@ -457,9 +458,8 @@ mod tests {
 
     // [utest->req~usubscription-subscribe-expiration~1]
     // [utest->req~usubscription-subscribe-no-expiration~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_subscribe_with_expiry() {
-        helpers::init_once();
         let command_sender = CommandSender::new();
 
         let now = SystemTime::now()
@@ -525,10 +525,8 @@ mod tests {
     // [utest->req~usubscription-subscribe-remote-response~1]
     #[test_case(test_lib::helpers::remote_topic1_uri(), State::SUBSCRIBE_PENDING; "Remote topic, remote state SUBSCRIBED_PENDING")]
     #[test_case(test_lib::helpers::remote_topic1_uri(), State::SUBSCRIBED; "Remote topic, remote state SUBSCRIBED")]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_remote_subscribe(remote_topic: TopicUUri, remote_state: State) {
-        helpers::init_once();
-
         // Prepare things
         let remote_subscription_request = SubscriptionRequest {
             topic: Some(remote_topic.clone()).into(),
@@ -590,10 +588,8 @@ mod tests {
 
     // [utest->req~usubscription-subscribe-remote~1]
     // [utest->req~usubscription-unsubscribe-last-remote~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_repeated_remote_subscribe() {
-        helpers::init_once();
-
         // Prepare things
         let remote_topic = test_lib::helpers::remote_topic1_uri();
         let remote_subscription_request = SubscriptionRequest {
@@ -653,9 +649,8 @@ mod tests {
 
     // All subscribers for a topic unsubscribe
     // [utest->req~usubscription-unsubscribe~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_final_unsubscribe() {
-        helpers::init_once();
         let command_sender = CommandSender::new();
 
         // Prepare things
@@ -694,9 +689,8 @@ mod tests {
     }
 
     // Only some subscribers of a topic unsubscribe
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_partial_unsubscribe() {
-        helpers::init_once();
         let command_sender = CommandSender::new();
 
         // Prepare things
@@ -748,9 +742,8 @@ mod tests {
 
     // All subscribers for a remote topic unsubscribe
     // [utest->req~usubscription-unsubscribe-last-remote~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_final_remote_unsubscribe() {
-        helpers::init_once();
         let remote_topic = test_lib::helpers::remote_topic1_uri();
 
         // Prepare things
@@ -828,9 +821,8 @@ mod tests {
     // Some subscribers for a remote topic unsubscribe, but at least one subscriber is left
     // [utest->req~usubscription-unsubscribe-last-remote~1]
     // [utest->req~usubscription-unsubscribe-remote-unsubscribed~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_partial_remote_unsubscribe() {
-        helpers::init_once();
         let remote_topic = test_lib::helpers::remote_topic1_uri();
 
         // Prepare things - we're not expecting any remote-unsubscribe action in this case
@@ -895,10 +887,8 @@ mod tests {
 
     // [utest->req~usubscription-subscribe-notifications~1]
     // [utest->dsn~usubscription-change-notification-update~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_local_subscribe_notification() {
-        helpers::init_once();
-
         // Prepare things
         let topic = test_lib::helpers::local_topic1_uri();
         let subscriber = test_lib::helpers::subscriber_uri1();
@@ -926,10 +916,8 @@ mod tests {
     }
 
     // [utest->dsn~usubscription-change-notification-update~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_local_unsubscribe_notification() {
-        helpers::init_once();
-
         // Prepare things
         // Prepare things
         #[allow(clippy::mutable_key_type)]
@@ -971,9 +959,9 @@ mod tests {
     }
 
     // TODO: Let's see if this is actually covered by a requirement - otherwise it should go
-    // #[tokio::test]
+    // #[test_log::test(tokio::test)]
     // async fn test_remote_subscribe_notification() {
-    //     helpers::init_once();
+    //     ;
 
     //     // Prepare things
     //     let topic = test_lib::helpers::remote_topic1_uri();
@@ -1011,10 +999,8 @@ mod tests {
     // }
 
     // [utest->dsn~usubscription-change-notification-update~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_state_change_notification() {
-        helpers::init_once();
-
         // Prepare things
         let topic = test_lib::helpers::remote_topic1_uri();
         let subscriber = test_lib::helpers::subscriber_uri1();
@@ -1065,9 +1051,8 @@ mod tests {
     }
 
     // [utest->req~usubscription-fetch-subscribers~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_fetch_subscribers() {
-        helpers::init_once();
         let command_sender = CommandSender::new();
 
         // set starting state
@@ -1113,9 +1098,8 @@ mod tests {
     }
 
     // [utest->req~usubscription-fetch-subscriptions-by-subscriber~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_fetch_subscriptions_by_subscriber() {
-        helpers::init_once();
         let command_sender = CommandSender::new();
 
         // set starting state
@@ -1174,9 +1158,8 @@ mod tests {
     }
 
     // [utest->req~usubscription-fetch-subscriptions-by-topic~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_fetch_subscriptions_by_topic() {
-        helpers::init_once();
         let command_sender = CommandSender::new();
 
         // set starting state
@@ -1233,10 +1216,8 @@ mod tests {
     }
 
     // [utest->req~usubscription-reset~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_reset_notifications() {
-        helpers::init_once();
-
         // Prepare things
         let topic = test_lib::helpers::remote_topic1_uri();
         let subscriber = test_lib::helpers::subscriber_uri1();

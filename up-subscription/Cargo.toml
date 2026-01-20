@@ -23,18 +23,17 @@ version.workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
-env_logger = { workspace = true }
-log = { workspace = true }
 pickledb = { version = "0.5.1" }
 protobuf = { workspace = true }
 serde = { version = "1.0" }
 tokio = { workspace = true }
+tracing = { workspace = true }
 up-rust = { workspace = true }
-uriparse = { version = "0.6" }
 
 [dev-dependencies]
 mockall = { workspace = true }
 test-case = { workspace = true }
+test-log ={ version = "0.2", default-features = false, features = ["trace"] }
 up-rust = { workspace = true, features = ["test-util"] }
 
 [package.metadata.dist]

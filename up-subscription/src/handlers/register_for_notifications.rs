@@ -12,9 +12,8 @@
  ********************************************************************************/
 
 use async_trait::async_trait;
-use log::*;
 use tokio::sync::mpsc::Sender;
-
+use tracing::error;
 use up_rust::{
     communication::{RequestHandler, ServiceInvocationError, UPayload},
     core::usubscription::{
@@ -93,13 +92,11 @@ mod tests {
 
     use up_rust::UUri;
 
-    use crate::{helpers, tests::test_lib};
+    use crate::tests::test_lib;
 
     // [utest->dsn~usubscription-register-notifications-protobuf~1]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_register_notification_success() {
-        helpers::init_once();
-
         // create request and other required object(s)
         let notification_request = NotificationsRequest {
             topic: Some(test_lib::helpers::local_topic1_uri()).into(),
@@ -142,10 +139,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_wrong_resource_id() {
-        helpers::init_once();
-
         // create request and other required object(s)
         let notification_request = NotificationsRequest {
             topic: Some(test_lib::helpers::local_topic1_uri()).into(),
@@ -172,10 +167,8 @@ mod tests {
         assert!(result.is_err_and(|err| matches!(err, ServiceInvocationError::InvalidArgument(_))));
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_no_source_uri() {
-        helpers::init_once();
-
         // create request and other required object(s)
         let notification_request = NotificationsRequest {
             topic: Some(test_lib::helpers::local_topic1_uri()).into(),
@@ -198,10 +191,8 @@ mod tests {
         assert!(result.is_err_and(|err| matches!(err, ServiceInvocationError::InvalidArgument(_))));
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_no_request_payload() {
-        helpers::init_once();
-
         // create request and other required object(s)
         let message_attributes = UAttributes {
             source: Some(test_lib::helpers::subscriber_uri1()).into(),
@@ -223,10 +214,8 @@ mod tests {
         assert!(result.is_err_and(|err| matches!(err, ServiceInvocationError::InvalidArgument(_))));
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_wrong_request_payload_type() {
-        helpers::init_once();
-
         // create request and other required object(s)
         let subscribe_request =
             test_lib::helpers::unsubscribe_request(test_lib::helpers::local_topic1_uri());
@@ -274,10 +263,8 @@ mod tests {
             resource_id: 0x0000_FFFF,
             ..Default::default()
         }; "Wildcard resource id in topic UUri")]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_invalid_topic_uri(topic: UUri) {
-        helpers::init_once();
-
         // create request and other required object(s)
         let notification_request = NotificationsRequest {
             topic: Some(topic).into(),
